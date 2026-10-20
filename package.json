@@ -1,0 +1,13 @@
+{
+  "name": "shop.online",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --test",
+    "setup:sheets": "node --env-file=.env setup-sheets.mjs",
+    "setup:password": "node password.mjs"
+  }
+}
