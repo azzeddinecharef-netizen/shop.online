@@ -9,6 +9,7 @@ async function api(path,data){
   const result=await r.json();if(!r.ok)throw new Error(result.error||'تعذر إتمام العملية.');return result;
 }
 function count(){ $('#count').textContent=cart.reduce((n,i)=>n+i.quantity,0);localStorage.setItem('shop-cart',JSON.stringify(cart));}
+function branding(){const name=catalog.settings.name;$('.brand>span:last-child').innerHTML=`${esc(name)}<small>أشياء تحبّها، لحياة أسهل.</small>`;$('.footerbrand').textContent=name;}
 function add(id,quantity=1){const p=catalog.products.find(p=>p.id===id);if(!p)return;const existing=cart.find(i=>i.id===id);
   if(!Number.isInteger(quantity)||quantity<1||quantity+(existing?.quantity||0)>p.stock)return toast('الكمية المطلوبة غير متوفرة.');
   if(existing)existing.quantity+=quantity;else cart.push({id,quantity});count();toast('أُضيف المنتج إلى حقيبتك.');}
@@ -37,8 +38,12 @@ function cartPage(){
 }
 async function adminPage(){
   const session=await api('/api/session');
-  if(!session.admin){$('#main').innerHTML=`<form id="login" class="panel narrow"><span class="eyebrow">STORE MANAGEMENT</span><h1>دخول الإدارة</h1><p class="muted">إدارة المنتجات والطلبات ومحتوى المتجر.</p>${session.demo?'<p class="error">هذه معاينة للواجهة. تفعيل الإدارة يحتاج ربط Google Sheets وإعداد كلمة مرور الإدارة على الخادم.</p>':''}<label>كلمة مرور الإدارة<input type="password" name="password" required autocomplete="current-password"></label><button class="primary" ${session.demo?'disabled':''}>تسجيل الدخول</button><p id="login-error" role="alert"></p></form>`;$('#login').onsubmit=async e=>{e.preventDefault();try{await api('/api/login',Object.fromEntries(new FormData(e.target)));await adminPage();}catch(err){$('#login-error').textContent=err.message;}};return;}
-  adminData=await api('/api/admin/data');images=[];editing=null;
+  if(!session.admin&&!session.demo){$('#main').innerHTML=`<form id="login" class="panel narrow"><span class="eyebrow">STORE MANAGEMENT</span><h1>دخول الإدارة</h1><p class="muted">إدارة المنتجات والطلبات ومحتوى المتجر.</p><label>كلمة مرور الإدارة<input type="password" name="password" required autocomplete="current-password"></label><button class="primary">تسجيل الدخول</button><p id="login-error" role="alert"></p></form>`;$('#login').onsubmit=async e=>{e.preventDefault();try{await api('/api/login',Object.fromEntries(new FormData(e.target)));await adminPage();}catch(err){$('#login-error').textContent=err.message;}};return;}
+  catalog.demo=session.demo;
+  adminData=await api(session.demo?'/api/demo/admin':'/api/admin/data');images=[];editing=null;
+  catalog.settings=adminData.settings;
+  branding();
+  if(session.demo){$('#notice').hidden=false;$('#notice').textContent='معاينة لوحة الإدارة — بيانات تجريبية فقط، والحفظ ورفع الصور معطّلان.';}
   $('#main').innerHTML=`<div class="adminhead"><div><span class="eyebrow">ADMIN DASHBOARD</span><h1>إدارة المتجر</h1></div><button class="secondary" id="logout">خروج</button></div><div class="tabs"><button class="chip selected" data-tab="products">المنتجات (${adminData.products.length})</button><button class="chip" data-tab="orders">الطلبات (${adminData.orders.length})</button><button class="chip" data-tab="settings">إعدادات المتجر</button></div><div id="admin-content"></div>`;
   $('#logout').onclick=async()=>{await api('/api/logout',{});location.reload();};adminProducts();
 }
@@ -50,6 +55,7 @@ function editor(){
   const p=editing||{name:'',category:'',description:'',price:'',stock:1,status:'draft'};
   $('#editor').innerHTML=`<form id="productform" class="panel"><h2>${editing?'تعديل المنتج':'منتج جديد'}</h2><div class="forms"><label>اسم المنتج<input name="name" required maxlength="120" value="${esc(p.name)}"></label><label>القسم<input name="category" list="categories" required maxlength="80" value="${esc(p.category)}"><datalist id="categories">${adminData.categories.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></label><label>السعر (${esc(catalog.settings.currency)})<input name="price" type="number" min=".01" step=".01" required value="${esc(p.price)}"></label><label>المخزون<input name="stock" type="number" min="0" required value="${p.stock}"></label><label>الحالة<select name="status">${[['draft','مسودة'],['active','منشور'],['archived','مؤرشف']].map(([v,t])=>`<option value="${v}" ${p.status===v?'selected':''}>${t}</option>`).join('')}</select></label><label>صور المنتج (حتى 8 صور)<input id="files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label><div class="full upload-preview" id="previews"></div><label class="full">وصف المنتج<textarea name="description" maxlength="6000">${esc(p.description)}</textarea></label></div><button class="primary" id="save-product">حفظ المنتج</button><p class="muted">يبقى رابط المنتج ثابتًا بعد تعديل الاسم. تظهر الأقسام التي تحتوي على منتجات منشورة ومتوفرة فقط.</p></form>`;
   previewImages();
+  if(catalog.demo){$('#save-product').disabled=true;$('#files').disabled=true;}
   $('#files').onchange=async e=>{const files=[...e.target.files];if(images.length+files.length>8)return toast('الحد الأقصى 8 صور.');$('#save-product').disabled=true;e.target.disabled=true;try{for(const f of files){if(f.size>3*1024*1024)throw new Error('كل صورة يجب أن تكون أقل من 3 MB.');const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(f);});const result=await api('/api/admin/image',{base64:data});images.push(result.path);previewImages();}toast('رُفعت الصور إلى GitHub. احفظ المنتج لنشرها.');}catch(err){toast(err.message);}finally{$('#save-product').disabled=false;e.target.disabled=false;e.target.value='';}};
   $('#productform').onsubmit=async e=>{e.preventDefault();$('#save-product').disabled=true;try{const input=Object.fromEntries(new FormData(e.target));await api('/api/admin/product',{...input,id:editing?.id,images,price:Number(input.price),stock:Number(input.stock)});await adminPage();toast('حُفظ المنتج في Google Sheets.');}catch(err){toast(err.message);$('#save-product').disabled=false;}};
   $('#editor').scrollIntoView({behavior:'smooth'});
@@ -63,6 +69,7 @@ function adminSettings(){
   const s=adminData.settings;
   $('#admin-content').innerHTML=`<form id="settings" class="panel"><h2>محتوى المتجر</h2><div class="forms">${[['name','اسم المتجر'],['headline','عنوان الصفحة الرئيسية'],['introduction','مقدمة المتجر'],['about','التعريف بالمتجر'],['delivery','التوصيل']].map(([key,label])=>`<label class="${key==='name'?'':'full'}">${label}<textarea name="${key}" required maxlength="5000">${esc(s[key])}</textarea></label>`).join('')}<label>العملة<select name="currency">${['DZD','EUR','USD','MAD','TND'].map(c=>`<option ${c===s.currency?'selected':''}>${c}</option>`).join('')}</select></label></div><button class="primary">حفظ الإعدادات</button></form>`;
   $('#settings').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{await api('/api/admin/settings',Object.fromEntries(new FormData(e.target)));toast('تم حفظ الإعدادات.');await adminPage();}catch(err){toast(err.message);b.disabled=false;}};
+  if(catalog.demo)$('#settings button').disabled=true;
 }
 document.addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
@@ -79,6 +86,7 @@ document.addEventListener('click',e=>{
   try{
     if(location.pathname==='/admin'){catalog={settings:{currency:'DZD'}};await adminPage();return;}
     catalog=await api('/api/catalog');
+    branding();
     if(catalog.demo){$('#notice').hidden=false;$('#notice').textContent='معاينة التصميم — المنتجات توضيحية، والطلبات والحفظ معطّلان حتى ربط المتجر.';}
     document.title=catalog.settings.name;
     if(location.pathname==='/about')about();else if(location.pathname==='/cart')cartPage();else if(location.pathname.startsWith('/product/'))detail();else home();

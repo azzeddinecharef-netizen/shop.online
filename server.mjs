@@ -47,6 +47,8 @@ http.createServer(async(req,res)=>{
       return json(res,{products,categories:activeCategories(products),settings:await settings(),demo});
     }
     if(p==='/api/session' && req.method==='GET') return json(res,{admin:!!admin(req),demo,connected:ready()});
+    if(p==='/api/demo/admin' && req.method==='GET' && demo)
+      return json(res,{products:await rows('Products'),orders:[],settings:await settings(),categories});
     if(p==='/api/login' && req.method==='POST'){
       limit(req,'login',8); const input=await body(req,3000);
       if(demo) return json(res,{error:'تسجيل الدخول معطل في المعاينة. أكمل إعداد المتجر أولًا.'},503);

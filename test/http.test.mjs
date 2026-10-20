@@ -9,6 +9,7 @@ test('demo HTTP boundary: catalog, private admin, CSRF, disabled writes and trav
     await once(child.stdout,'data');
     const catalog=await (await fetch(base+'/api/catalog')).json();
     assert.equal(catalog.demo,true);assert.equal(catalog.products.length,3);
+    assert.equal((await (await fetch(base+'/api/demo/admin')).json()).products.length,3);
     assert.equal((await fetch(base+'/api/admin/data')).status,401);
     assert.equal((await fetch(base+'/api/orders',{method:'POST',headers:{Origin:'https://attacker.invalid','Content-Type':'application/json'},body:'{}'})).status,403);
     assert.equal((await fetch(base+'/api/orders',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:'{}'})).status,503);
