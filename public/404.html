@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Shop Online | جاري التحويل...</title>
+  <script>
+    // GitHub Pages SPA redirect script
+    var l = window.location;
+    var path = l.pathname;
+    var segments = path.split('/').filter(Boolean);
+    var repoName = 'shop.online';
+    var repoIndex = segments.indexOf(repoName);
+    var route = '';
+    if (repoIndex !== -1) {
+      route = segments.slice(repoIndex + 1).join('/');
+    } else {
+      route = segments.join('/');
+    }
+    var targetUrl = l.protocol + '//' + l.host + (repoIndex !== -1 ? '/' + repoName + '/' : '/') + '#/' + route + (l.search ? l.search : '');
+    window.location.replace(targetUrl);
+  </script>
+</head>
+<body>
+  <p style="font-family:sans-serif; text-align:center; padding-top:40px;">جاري توجيهك إلى المتجر...</p>
+</body>
+</html>

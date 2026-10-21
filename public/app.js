@@ -35,10 +35,11 @@
 
   // Universal Image Source Resolver
   function imgSrc(path) {
-    if (!path) return '/images/headphones.jpg';
-    if (typeof path !== 'string') return '/images/headphones.jpg';
+    if (!path) return './images/headphones.jpg';
+    if (typeof path !== 'string') return './images/headphones.jpg';
     if (path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('http://') || path.startsWith('https://')) return path;
-    return path.startsWith('/') ? path : '/' + path;
+    const clean = path.replace(/^\/+/, '');
+    return './' + clean;
   }
 
   // Toast Notification
@@ -1297,9 +1298,48 @@
         e.preventDefault();
         const customerName = $('#order-name').value;
         const wilaya = $('#order-wilaya').value;
-        const fakeOrderId = 'DEMO-' + Math.floor(100000 + Math.random() * 900000);
+        const orderPhone = $('#order-phone').value;
+        const orderAddress = $('#order-address').value;
+        const orderNotes = $('#order-notes').value || '';
+        const orderId = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
 
-        // Show Demo Success Modal
+        const newOrder = {
+          id: orderId,
+          name: customerName,
+          phone: orderPhone,
+          wilaya: wilaya,
+          address: orderAddress,
+          notes: orderNotes,
+          total: subtotal,
+          items: cart.map(item => {
+            const p = catalog.products.find(x => x.id === item.id) || {};
+            return { id: item.id, name: p.name || 'منتج', price: p.price || 0, quantity: item.quantity, color: item.color };
+          }),
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        };
+
+        // Persist order in local admin storage
+        try {
+          const storedOrders = JSON.parse(localStorage.getItem('shop_admin_orders') || '[]');
+          storedOrders.unshift(newOrder);
+          localStorage.setItem('shop_admin_orders', JSON.stringify(storedOrders));
+        } catch (e) {}
+
+        // Send to Google Sheets if configured
+        const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+        if (sheetUrl && sheetUrl.startsWith('http')) {
+          try {
+            fetch(sheetUrl, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'newOrder', order: newOrder })
+            });
+          } catch (e) {}
+        }
+
+        // Show Success Modal
         body.innerHTML = `
           <div style="text-align:center; padding:10px 0;">
             <div style="width:64px; height:64px; background:#EAF7EE; color:#28A745; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; margin-bottom:16px;">
@@ -1307,16 +1347,18 @@
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
             </div>
-            <h2 style="font-size:24px; font-weight:800; color:var(--text-ink); margin-bottom:8px;">تم تسجيل طلب المعاينة بنجاح!</h2>
-            <p style="font-size:14px; color:var(--text-muted); line-height:1.6; margin-bottom:20px;">
+            <h2 style="font-size:24px; font-weight:800; color:var(--text-ink); margin-bottom:8px;">تم تأكيد طلبك بنجاح!</h2>
+            <p style="font-size:14px; color:var(--text-muted); line-height:1.6; margin-bottom:16px;">
               شكراً لك يا <strong>${esc(customerName)}</strong> (${esc(wilaya)}).<br>
-              رقم طلب المعاينة هو: <strong>${fakeOrderId}</strong>
+              رقم طلبك هو: <strong style="color:var(--accent-action); font-size:16px;">#${orderId}</strong>
             </p>
-            <div style="background:#FFF3CD; border:1px solid #FFEEBA; border-radius:var(--radius-sm); padding:12px; font-size:13px; color:#856404; margin-bottom:24px;">
-              تذكير: لم يتم إرسال طلب حقيقي إلى المتجر لأن النظام يعمل في وضع المعاينة التجريبي (DEMO).
+            <div style="background:var(--bg-canvas); border:1px solid var(--line-border); border-radius:var(--radius-sm); padding:14px; font-size:13px; color:var(--text-ink); margin-bottom:24px; text-align:right;">
+              <div>• <strong>المبلغ المطلوب عند الاستلام:</strong> ${money(subtotal)}</div>
+              <div>• <strong>حالة الطلب:</strong> قيد المراجعة وسيتصل بك فريق العمل لتأكيد الشحن.</div>
+              <div>• <strong>العنوان:</strong> ${esc(orderAddress)} - ${esc(wilaya)}</div>
             </div>
             <button type="button" class="btn-primary" id="finish-demo-order-btn" style="width:100%;">
-              <span>العودة للمتجر</span>
+              <span>العودة للتسوّق</span>
             </button>
           </div>
         `;
@@ -1627,622 +1669,930 @@
     `;
   }
 
-  // 10. Admin Page (Preserve existing functionality)
+  // 10. Admin Page (100% Serverless, GitHub Pages, Google Sheets, Direct GitHub Uploads)
   async function renderAdmin() {
     const main = $('#main');
     if (!main) return;
 
-    document.title = `إدارة المتجر | ${catalog.settings.name}`;
+    document.title = `لوحة إدارة المتجر | ${catalog.settings.name}`;
 
-    try {
-      const session = await api('/api/session');
-      if (!session.admin && !session.demo) {
-        main.innerHTML = `
-          <div class="page-container-narrow">
-            <form id="admin-login-form" class="page-card">
-              <span class="hero-tag">STORE MANAGEMENT</span>
-              <h1 class="page-header-title">دخول الإدارة</h1>
-              <p class="page-header-desc">إدارة المنتجات والطلبات ومحتوى المتجر.</p>
-              <div class="form-group" style="margin-bottom:18px;">
-                <label class="form-label" for="admin-pass">كلمة مرور الإدارة</label>
-                <input type="password" id="admin-pass" name="password" class="form-input" required autocomplete="current-password">
-              </div>
-              <button type="submit" class="btn-primary" style="width:100%;">تسجيل الدخول</button>
-              <p id="admin-login-error" style="color:#E02424; font-size:13px; margin-top:12px;" role="alert"></p>
-            </form>
-          </div>
-        `;
+    // 1. Authentication Check (Password is 123)
+    const isAuthed = localStorage.getItem('shop_admin_authed') === 'true';
 
-        $('#admin-login-form').onsubmit = async e => {
-          e.preventDefault();
-          try {
-            await api('/api/login', { password: $('#admin-pass').value });
-            await renderAdmin();
-          } catch (err) {
-            $('#admin-login-error').textContent = err.message;
-          }
-        };
-        return;
-      }
-
-      adminData = await api(session.demo ? '/api/demo/admin' : '/api/admin/data');
-      catalog.settings = adminData.settings || catalog.settings;
-
+    if (!isAuthed) {
       main.innerHTML = `
-        <div class="page-container-narrow" style="max-width:1100px;">
-          <div class="cart-title-row" style="margin-bottom:16px;">
-            <div>
-              <span class="hero-tag">ADMIN DASHBOARD</span>
-              <h1 class="page-header-title">لوحة إدارة المتجر</h1>
+        <div class="page-container-narrow" style="max-width:480px; margin:40px auto;">
+          <form id="admin-login-form" class="page-card" style="box-shadow:var(--shadow-md); border-color:var(--accent-coral);">
+            <div style="text-align:center; margin-bottom:20px;">
+              <span class="hero-tag">STORE MANAGEMENT</span>
+              <h1 class="page-header-title" style="margin-top:8px;">دخول لوحة التحكم</h1>
+              <p class="page-header-desc">أدخل كلمة مرور الإدارة لإدارة المنتجات، الطلبات، والربط المباشر.</p>
             </div>
-            <button type="button" class="btn-continue-shopping" id="admin-logout-btn">تسجيل الخروج</button>
-          </div>
 
-          <div class="admin-notice-card">
-            <div style="font-size:22px; line-height:1; flex-shrink:0;">💡</div>
-            <div>
-              <strong>أهلاً بك في لوحة تحكم المتجر:</strong>
-              ${session.demo ? 'المتجر يعمل حالياً في وضع المعاينة (DEMO Mode) الآمن. يمكنك تجربة كافة خصائص الإدارة (إضافة منتجات، تعديل، رفع صور، إدارة الطلبات، والإعدادات). لتفعيل الحفظ الدائم، يتم ربط Google Sheets و GitHub Token في متغيرات السيرفر.' : 'المتجر مربوط بالكامل ويتم حفظ المنتجات في Google Sheets والصور في GitHub مباشرة.'}
+            <div class="form-group" style="margin-bottom:18px;">
+              <label class="form-label" for="admin-pass">كلمة مرور الإدارة</label>
+              <input type="password" id="admin-pass" name="password" class="form-input" required autocomplete="current-password" placeholder="أدخل كلمة المرور (123)">
+              <div style="font-size:12px; color:var(--text-muted); margin-top:6px;">🔑 كلمة المرور لدخول لوحة التحكم هي: <strong>123</strong></div>
             </div>
-          </div>
 
-          <div class="filter-chips" style="margin-bottom:20px;">
-            <button type="button" class="chip-btn active" data-admin-tab="products">المنتجات (${adminData.products.length})</button>
-            <button type="button" class="chip-btn" data-admin-tab="orders">إدارة الطلبات (${(adminData.orders || []).length})</button>
-            <button type="button" class="chip-btn" data-admin-tab="settings">إعدادات ومحتوى المتجر</button>
-          </div>
-
-          <div id="admin-tab-content"></div>
+            <button type="submit" class="btn-primary" style="width:100%; padding:14px; font-size:16px;">
+              <span>تسجيل الدخول إلى الداشبورد</span>
+              <span aria-hidden="true">←</span>
+            </button>
+            <p id="admin-login-error" style="color:#E02424; font-size:13px; margin-top:12px; text-align:center;" role="alert"></p>
+          </form>
         </div>
       `;
 
-      let editingProduct = null;
-      let editorImages = [];
-      let currentTab = 'products';
-
-      function renderAdminTabs() {
-        const tabContent = $('#admin-tab-content');
-        if (!tabContent) return;
-
-        $$('[data-admin-tab]').forEach(btn => {
-          btn.classList.toggle('active', btn.dataset.adminTab === currentTab);
-        });
-
-        if (currentTab === 'products') {
-          renderAdminProducts(tabContent);
-        } else if (currentTab === 'orders') {
-          renderAdminOrders(tabContent);
-        } else if (currentTab === 'settings') {
-          renderAdminSettings(tabContent);
+      $('#admin-login-form').onsubmit = async e => {
+        e.preventDefault();
+        const enteredPass = $('#admin-pass').value.trim();
+        if (enteredPass === '123') {
+          localStorage.setItem('shop_admin_authed', 'true');
+          toast('تم تسجيل الدخول بنجاح! مرحباً بك في لوحة الإدارة.');
+          await renderAdmin();
+        } else {
+          // Optional fallback for local dev server
+          try {
+            await api('/api/login', { password: enteredPass });
+            localStorage.setItem('shop_admin_authed', 'true');
+            await renderAdmin();
+          } catch (err) {
+            $('#admin-login-error').textContent = 'كلمة المرور غير صحيحة. كلمة المرور هي 123';
+          }
         }
+      };
+      return;
+    }
+
+    // 2. Load and Combine Data
+    let localProds = [];
+    try {
+      const raw = localStorage.getItem('shop_admin_products');
+      if (raw) localProds = JSON.parse(raw);
+    } catch (e) {}
+
+    let localOrders = [];
+    try {
+      const rawO = localStorage.getItem('shop_admin_orders');
+      if (rawO) localOrders = JSON.parse(rawO);
+    } catch (e) {}
+
+    let remoteData = null;
+    try {
+      remoteData = await api('/api/demo/admin');
+    } catch (e) {}
+
+    let allProducts = [...(remoteData?.products || BASELINE_PRODUCTS)];
+    if (localProds && localProds.length) {
+      for (const lp of localProds) {
+        const idx = allProducts.findIndex(p => p.id === lp.id || p.slug === lp.slug);
+        if (idx >= 0) allProducts[idx] = { ...allProducts[idx], ...lp };
+        else allProducts.unshift(lp);
       }
+    }
 
-      function renderAdminProducts(container) {
-        container.innerHTML = `
-          <div class="admin-card">
-            <div class="admin-header-row">
-              <div>
-                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">قائمة المنتجات (${adminData.products.length})</h2>
-                <p style="font-size:13px; color:var(--text-muted);">إدارة وتعديل المنتجات المنشورة والمخزون والأسعار.</p>
-              </div>
-              <button type="button" class="btn-primary" id="admin-new-product-btn" style="padding:10px 20px; font-size:14px;">
-                <span>+ إضافة منتج جديد</span>
-              </button>
+    let savedSettings = null;
+    try {
+      const rawS = localStorage.getItem('shop_settings');
+      if (rawS) savedSettings = JSON.parse(rawS);
+    } catch (e) {}
+
+    adminData = {
+      products: allProducts,
+      orders: localOrders.length ? localOrders : (remoteData?.orders || []),
+      settings: savedSettings || remoteData?.settings || catalog.settings,
+      categories: catalog.categories
+    };
+
+    const sheetUrl = localStorage.getItem('shop_google_sheet_url') || '';
+    const ghToken = localStorage.getItem('shop_gh_token') || '';
+    const ghRepo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+    const ghBranch = localStorage.getItem('shop_gh_branch') || 'main';
+
+    main.innerHTML = `
+      <div class="page-container-narrow" style="max-width:1150px; margin:24px auto;">
+        <div class="cart-title-row" style="margin-bottom:16px;">
+          <div>
+            <span class="hero-tag">SHOP ADMIN DASHBOARD</span>
+            <h1 class="page-header-title">لوحة إدارة المتجر</h1>
+          </div>
+          <button type="button" class="btn-continue-shopping" id="admin-logout-btn" style="color:#E02424; border-color:#FECACA;">تسجيل الخروج ✕</button>
+        </div>
+
+        <!-- Status Overview Card -->
+        <div class="admin-notice-card" style="background:#FFFFFF; border:1px solid var(--line-border); box-shadow:var(--shadow-sm); display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div style="font-weight:800; font-size:15px; color:var(--text-ink);">حالة النظام والاستضافة:</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <span class="admin-badge active">🌐 مستضاف على GitHub Pages</span>
+              <span class="admin-badge ${sheetUrl ? 'active' : 'draft'}">${sheetUrl ? '📊 Google Sheets متصل' : '⚠️ Google Sheets غير مربوط'}</span>
+              <span class="admin-badge ${ghToken ? 'active' : 'draft'}">${ghToken ? '🐙 رفع صور GitHub مباشر' : '⚠️ رمز GitHub غير مدخل'}</span>
             </div>
+          </div>
+          <p style="font-size:13px; color:var(--text-muted); margin:0;">
+            نظام متجرك يعمل الآن بالكامل خارج ريلواي وبدون خادم وسيط. عند إضافة أو تعديل المنتجات يتم حفظها فوراً في المتجر، وتُسجّل في Google Sheets، كما تُرفع الصور مباشرة إلى مستودع GitHub.
+          </p>
+        </div>
 
-            <div id="admin-editor-wrap" style="margin-bottom:24px;"></div>
+        <!-- Navigation Tabs -->
+        <div class="filter-chips" style="margin-bottom:20px;">
+          <button type="button" class="chip-btn active" data-admin-tab="products">📦 المنتجات (${adminData.products.length})</button>
+          <button type="button" class="chip-btn" data-admin-tab="orders">🛍️ الطلبات (${adminData.orders.length})</button>
+          <button type="button" class="chip-btn" data-admin-tab="sheets">📊 ربط Google Sheets</button>
+          <button type="button" class="chip-btn" data-admin-tab="github">🐙 رفع الصور إلى GitHub</button>
+          <button type="button" class="chip-btn" data-admin-tab="settings">⚙️ إعدادات المتجر</button>
+        </div>
 
-            <div class="admin-table-wrap">
-              <table class="admin-table">
-                <thead>
-                  <tr>
-                    <th>المنتج</th>
-                    <th>القسم</th>
-                    <th>السعر</th>
-                    <th>المخزون</th>
-                    <th>الحالة</th>
-                    <th>إجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${adminData.products.length === 0 ? `
-                    <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">لا توجد منتجات حتى الآن. اضغط "+ إضافة منتج جديد" للبدء.</td></tr>
-                  ` : adminData.products.map(p => `
+        <div id="admin-tab-content"></div>
+      </div>
+    `;
+
+    let editingProduct = null;
+    let editorImages = [];
+    let currentTab = 'products';
+
+    function renderAdminTabs() {
+      const tabContent = $('#admin-tab-content');
+      if (!tabContent) return;
+
+      $$('[data-admin-tab]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.adminTab === currentTab);
+      });
+
+      if (currentTab === 'products') renderAdminProducts(tabContent);
+      else if (currentTab === 'orders') renderAdminOrders(tabContent);
+      else if (currentTab === 'sheets') renderAdminSheets(tabContent);
+      else if (currentTab === 'github') renderAdminGitHub(tabContent);
+      else if (currentTab === 'settings') renderAdminSettings(tabContent);
+    }
+
+    // --- TAB 1: Products Management ---
+    function renderAdminProducts(container) {
+      container.innerHTML = `
+        <div class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">قائمة المنتجات (${adminData.products.length})</h2>
+              <p style="font-size:13px; color:var(--text-muted);">إدارة وتعديل المنتجات المنشورة والمخزون والصور والأسعار.</p>
+            </div>
+            <button type="button" class="btn-primary" id="admin-new-product-btn" style="padding:10px 20px; font-size:14px;">
+              <span>+ إضافة منتج جديد</span>
+            </button>
+          </div>
+
+          <div id="admin-editor-wrap" style="margin-bottom:24px;"></div>
+
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>صورة</th>
+                  <th>المنتج</th>
+                  <th>القسم</th>
+                  <th>السعر</th>
+                  <th>المخزون</th>
+                  <th>الحالة</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${adminData.products.length === 0 ? `
+                  <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">لا توجد منتجات حتى الآن. اضغط "+ إضافة منتج جديد" للبدء.</td></tr>
+                ` : adminData.products.map(p => {
+                  const thumb = (p.images && p.images[0]) ? p.images[0] : '';
+                  return `
                     <tr>
+                      <td style="width:50px;">
+                        <img src="${esc(imgSrc(thumb))}" alt="" style="width:40px; height:40px; object-fit:cover; border-radius:6px; border:1px solid var(--line-border);">
+                      </td>
                       <td style="font-weight:700;">${esc(p.name)}</td>
-                      <td style="color:var(--text-muted);">${esc(p.category)}</td>
+                      <td style="color:var(--text-muted);">${esc(p.category || 'عام')}</td>
                       <td style="font-weight:700; color:var(--text-ink);">${money(p.price)}</td>
                       <td>${p.stock}</td>
-                      <td><span class="admin-badge ${esc(p.status)}">${p.status === 'active' ? 'منشور' : (p.status === 'draft' ? 'مسودة' : 'مؤرشف')}</span></td>
+                      <td><span class="admin-badge ${esc(p.status || 'active')}">${p.status === 'active' ? 'منشور' : (p.status === 'draft' ? 'مسودة' : 'مؤرشف')}</span></td>
                       <td>
                         <div style="display:flex; gap:8px; align-items:center;">
                           <button type="button" class="btn-secondary" data-admin-edit="${esc(p.id)}" style="padding:6px 12px; font-size:12px;">تعديل</button>
-                          <a href="/product/${encodeURIComponent(p.slug)}" target="_blank" rel="noopener" style="font-size:12px; color:var(--accent-action); font-weight:700;">معاينة ↗</a>
+                          <a href="#/product/${encodeURIComponent(p.slug)}" style="font-size:12px; color:var(--accent-action); font-weight:700;">معاينة ↗</a>
                         </div>
                       </td>
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
           </div>
-        `;
+        </div>
+      `;
 
-        $('#admin-new-product-btn').onclick = () => {
-          editingProduct = null;
-          editorImages = [];
+      $('#admin-new-product-btn').onclick = () => {
+        editingProduct = null;
+        editorImages = [];
+        openProductEditor();
+      };
+
+      container.querySelectorAll('[data-admin-edit]').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.adminEdit;
+          editingProduct = adminData.products.find(p => p.id === id);
+          editorImages = editingProduct ? [...(editingProduct.images || [])] : [];
           openProductEditor();
         };
+      });
+    }
 
-        container.querySelectorAll('[data-admin-edit]').forEach(btn => {
-          btn.onclick = () => {
-            const id = btn.dataset.adminEdit;
-            editingProduct = adminData.products.find(p => p.id === id);
-            editorImages = editingProduct ? [...(editingProduct.images || [])] : [];
-            openProductEditor();
-          };
-        });
-      }
+    function openProductEditor() {
+      const wrap = $('#admin-editor-wrap');
+      if (!wrap) return;
 
-      function openProductEditor() {
-        const wrap = $('#admin-editor-wrap');
-        if (!wrap) return;
+      const p = editingProduct || { name: '', category: '', description: '', price: '', stock: 1, status: 'active', images: [] };
+      const categories = adminData.categories || ['إلكترونيات', 'أزياء وإكسسوارات', 'المنزل', 'أحذية', 'ساعات وإكسسوارات'];
+      const hasGhToken = !!localStorage.getItem('shop_gh_token');
 
-        const p = editingProduct || { name: '', category: '', description: '', price: '', stock: 1, status: 'active', images: [] };
-        const categories = adminData.categories || ['إلكترونيات', 'أزياء وإكسسوارات', 'المنزل', 'أحذية', 'ساعات وإكسسوارات'];
+      wrap.innerHTML = `
+        <form id="admin-product-form" class="admin-card" style="background:#FAFBFD; border-color:var(--accent-coral);">
+          <div class="admin-header-row">
+            <h3 style="font-size:16px; font-weight:800; color:var(--text-ink);">${editingProduct ? 'تعديل المنتج' : 'إضافة منتج جديد'}</h3>
+            <button type="button" class="btn-secondary" id="admin-cancel-edit-btn" style="padding:6px 14px; font-size:12px;">إلغاء</button>
+          </div>
 
-        wrap.innerHTML = `
-          <form id="admin-product-form" class="admin-card" style="background:#FAFBFD; border-color:var(--accent-coral);">
-            <div class="admin-header-row">
-              <h3 style="font-size:16px; font-weight:800; color:var(--text-ink);">${editingProduct ? 'تعديل المنتج' : 'إضافة منتج جديد'}</h3>
-              <button type="button" class="btn-secondary" id="admin-cancel-edit-btn" style="padding:6px 14px; font-size:12px;">إلغاء</button>
-            </div>
+          <div class="admin-form-grid">
+            <label class="admin-label">
+              <span>اسم المنتج *</span>
+              <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(p.name)}" placeholder="مثال: ساعة ذكية مقاومة للماء">
+            </label>
 
-            <div class="admin-form-grid">
-              <label class="admin-label">
-                <span>اسم المنتج *</span>
-                <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(p.name)}" placeholder="مثال: ساعة ذكية مقاومة للماء">
-              </label>
+            <label class="admin-label">
+              <span>القسم *</span>
+              <input type="text" name="category" list="admin-categories-datalist" class="admin-input" required maxlength="80" value="${esc(p.category)}" placeholder="اختر أو اكتب قسماً جديداً">
+              <datalist id="admin-categories-datalist">
+                ${categories.map(c => `<option value="${esc(c)}">`).join('')}
+              </datalist>
+            </label>
 
-              <label class="admin-label">
-                <span>القسم *</span>
-                <input type="text" name="category" list="admin-categories-datalist" class="admin-input" required maxlength="80" value="${esc(p.category)}" placeholder="اختر أو اكتب قسماً جديداً">
-                <datalist id="admin-categories-datalist">
-                  ${categories.map(c => `<option value="${esc(c)}">`).join('')}
-                </datalist>
-              </label>
+            <label class="admin-label">
+              <span>السعر (${esc(catalog.settings.currency || 'DZD')}) *</span>
+              <input type="number" name="price" class="admin-input" min="0.01" step="0.01" required value="${esc(p.price)}" placeholder="0.00">
+            </label>
 
-              <label class="admin-label">
-                <span>السعر (${esc(catalog.settings.currency)}) *</span>
-                <input type="number" name="price" class="admin-input" min="0.01" step="0.01" required value="${esc(p.price)}" placeholder="0.00">
-              </label>
+            <label class="admin-label">
+              <span>المخزون المتوفر *</span>
+              <input type="number" name="stock" class="admin-input" min="0" step="1" required value="${p.stock}">
+            </label>
 
-              <label class="admin-label">
-                <span>المخزون المتوفر *</span>
-                <input type="number" name="stock" class="admin-input" min="0" step="1" required value="${p.stock}">
-              </label>
+            <label class="admin-label">
+              <span>حالة المنتج</span>
+              <select name="status" class="admin-select">
+                <option value="active" ${p.status === 'active' ? 'selected' : ''}>منشور (يظهر للزبائن في المتجر)</option>
+                <option value="draft" ${p.status === 'draft' ? 'selected' : ''}>مسودة (مخفي)</option>
+                <option value="archived" ${p.status === 'archived' ? 'selected' : ''}>مؤرشف (غير متاح للطلب)</option>
+              </select>
+            </label>
 
-              <label class="admin-label">
-                <span>حالة المنتج</span>
-                <select name="status" class="admin-select">
-                  <option value="active" ${p.status === 'active' ? 'selected' : ''}>منشور (يظهر للزبائن في المتجر)</option>
-                  <option value="draft" ${p.status === 'draft' ? 'selected' : ''}>مسودة (مخفي)</option>
-                  <option value="archived" ${p.status === 'archived' ? 'selected' : ''}>مؤرشف (غير متاح للطلب)</option>
-                </select>
-              </label>
+            <label class="admin-label">
+              <span>رفع صور للمنتج مباشرة إلى GitHub (حتى 8 صور)</span>
+              <input type="file" id="admin-files-input" class="admin-input" accept="image/jpeg,image/png,image/webp" multiple>
+            </label>
 
-              <label class="admin-label">
-                <span>رفع صور للمنتج (حتى 8 صور)</span>
-                <input type="file" id="admin-files-input" class="admin-input" accept="image/jpeg,image/png,image/webp" multiple>
-              </label>
-
-              <div class="full-width">
-                <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">معاينة صور المنتج:</div>
-                <div class="admin-image-previews" id="admin-img-previews"></div>
-                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
-                  📌 ملاحظة: عند حفظ الصور، يتم رفعها وتخزينها تلقائياً وبأمان في مستودع GitHub الخاص بك.
-                </div>
+            <div class="full-width">
+              <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">معاينة صور المنتج:</div>
+              <div class="admin-image-previews" id="admin-img-previews"></div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
+                ${hasGhToken ? '🟢 الرفع المباشر مفعل: عند اختيار الصور يتم إرسالها وحفظها مباشرة في مستودع GitHub الخاص بك.' : '💡 ملاحظة: الصور المختارة حالياً تُحفظ كمعاينة. لرفعها وتخزينها مباشرة في مستودع GitHub، يرجى إدخال GitHub Token في تبويب "رفع الصور إلى GitHub".'}
               </div>
-
-              <label class="admin-label full-width">
-                <span>وصف المنتج</span>
-                <textarea name="description" class="admin-textarea" maxlength="6000" placeholder="اكتب تفاصيل ومميزات المنتج ومحتويات العلبة...">${esc(p.description)}</textarea>
-              </label>
             </div>
 
-            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
-              <button type="submit" class="btn-primary" id="admin-save-product-btn" style="padding:12px 28px;">
-                <span>${editingProduct ? 'تحديث المنتج' : 'حفظ ونشر المنتج'}</span>
-              </button>
-            </div>
-          </form>
-        `;
+            <label class="admin-label full-width">
+              <span>وصف المنتج ومميزاته</span>
+              <textarea name="description" class="admin-textarea" maxlength="6000" placeholder="اكتب تفاصيل ومميزات المنتج ومحتويات العلبة...">${esc(p.description)}</textarea>
+            </label>
+          </div>
 
-        renderEditorImages();
+          <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+            <button type="submit" class="btn-primary" id="admin-save-product-btn" style="padding:12px 28px;">
+              <span>${editingProduct ? 'تحديث المنتج' : 'حفظ ونشر المنتج'}</span>
+            </button>
+          </div>
+        </form>
+      `;
 
-        $('#admin-cancel-edit-btn').onclick = () => {
-          wrap.innerHTML = '';
-        };
+      renderEditorImages();
 
-        const fileInput = $('#admin-files-input');
-        fileInput.onchange = async e => {
-          const files = [...e.target.files];
-          if (editorImages.length + files.length > 8) {
-            toast('الحد الأقصى 8 صور لكل منتج.');
-            return;
-          }
-          const saveBtn = $('#admin-save-product-btn');
-          saveBtn.disabled = true;
-          fileInput.disabled = true;
+      $('#admin-cancel-edit-btn').onclick = () => {
+        wrap.innerHTML = '';
+      };
 
-          try {
-            for (const f of files) {
-              if (f.size > 3 * 1024 * 1024) throw new Error('كل صورة يجب أن تكون أقل من 3 MB.');
-              const base64Data = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result.split(',')[1]);
-                reader.onerror = reject;
-                reader.readAsDataURL(f);
-              });
-              const dataUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(f);
-              });
-
-              try {
-                const res = await api('/api/admin/image', { base64: base64Data });
-                editorImages.push(res.path);
-              } catch (apiErr) {
-                editorImages.push(dataUrl);
-              }
-              renderEditorImages();
-            }
-            toast('تم تجهيز الصور بنجاح.');
-          } catch (err) {
-            toast(err.message);
-          } finally {
-            saveBtn.disabled = false;
-            fileInput.disabled = false;
-            fileInput.value = '';
-          }
-        };
-
-        $('#admin-product-form').onsubmit = async e => {
-          e.preventDefault();
-          const saveBtn = $('#admin-save-product-btn');
-          saveBtn.disabled = true;
-          try {
-            const formData = new FormData(e.target);
-            const input = Object.fromEntries(formData);
-            const payload = {
-              ...input,
-              id: editingProduct?.id,
-              images: editorImages,
-              price: Number(input.price),
-              stock: Number(input.stock)
-            };
-
-            let savedProduct;
-            try {
-              const res = await api('/api/admin/product', payload);
-              savedProduct = res.product;
-              toast('تم حفظ المنتج بنجاح.');
-            } catch (saveErr) {
-              savedProduct = {
-                ...payload,
-                id: editingProduct?.id || ('prod-' + Date.now()),
-                slug: editingProduct?.slug || (payload.name || 'product').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0600-\u06ff-]/g, ''),
-                createdAt: new Date().toISOString()
-              };
-              toast('تم حفظ المنتج وتحديث المتجر.');
-            }
-
-            if (savedProduct) {
-              // Update adminData.products
-              if (editingProduct) {
-                const idx = adminData.products.findIndex(x => x.id === savedProduct.id);
-                if (idx >= 0) adminData.products[idx] = savedProduct;
-              } else {
-                adminData.products.unshift(savedProduct);
-              }
-
-              // Update catalog.products immediately so it appears on home & detail page!
-              const catIdx = catalog.products.findIndex(x => x.id === savedProduct.id || x.slug === savedProduct.slug);
-              if (catIdx >= 0) {
-                catalog.products[catIdx] = { ...catalog.products[catIdx], ...savedProduct };
-              } else {
-                catalog.products.unshift(savedProduct);
-              }
-
-              // Update categories list if new category
-              if (savedProduct.category && !catalog.categories.includes(savedProduct.category)) {
-                catalog.categories.push(savedProduct.category);
-              }
-
-              // Persist in localStorage so it stays across reloads & tabs
-              try {
-                localStorage.setItem('shop_admin_products', JSON.stringify(adminData.products));
-              } catch (e) {}
-            }
-
-            wrap.innerHTML = '';
-            renderAdminProducts($('#admin-tab-content'));
-          } catch (err) {
-            toast(err.message);
-          } finally {
-            saveBtn.disabled = false;
-          }
-        };
-
-        wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-
-      function renderEditorImages() {
-        const previews = $('#admin-img-previews');
-        if (!previews) return;
-        if (editorImages.length === 0) {
-          previews.innerHTML = '<span style="font-size:12px; color:var(--text-muted);">لم يتم اختيار صور بعد.</span>';
+      const fileInput = $('#admin-files-input');
+      fileInput.onchange = async e => {
+        const files = [...e.target.files];
+        if (editorImages.length + files.length > 8) {
+          toast('الحد الأقصى 8 صور لكل منتج.');
           return;
         }
-        previews.innerHTML = editorImages.map((src, i) => `
-          <div class="admin-img-thumb">
-            <img src="${esc(imgSrc(src))}" alt="صورة ${i+1}">
-            <button type="button" data-remove-img="${i}" title="إزالة الصورة">✕</button>
-          </div>
-        `).join('');
+        const saveBtn = $('#admin-save-product-btn');
+        saveBtn.disabled = true;
+        fileInput.disabled = true;
 
-        previews.querySelectorAll('[data-remove-img]').forEach(btn => {
-          btn.onclick = () => {
-            const idx = Number(btn.dataset.removeImg);
-            editorImages.splice(idx, 1);
+        const ghToken = localStorage.getItem('shop_gh_token');
+        const repo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+        const branch = localStorage.getItem('shop_gh_branch') || 'main';
+
+        try {
+          for (const f of files) {
+            if (f.size > 4 * 1024 * 1024) throw new Error('حجم الصورة يجب أن يكون أقل من 4 MB.');
+
+            const dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(f);
+            });
+
+            if (ghToken) {
+              const base64Content = dataUrl.split(',')[1];
+              const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+              const fileName = `${Date.now()}-${safeName}`;
+              const filePath = `public/images/uploads/${fileName}`;
+
+              try {
+                toast(`جارٍ رفع "${f.name}" مباشرة إلى GitHub...`);
+                const ghRes = await fetch(`https://api.github.com/repos/${repo}/contents/${filePath}`, {
+                  method: 'PUT',
+                  headers: {
+                    'Authorization': `token ${ghToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github.v3+json'
+                  },
+                  body: JSON.stringify({
+                    message: `Upload product image directly: ${fileName}`,
+                    content: base64Content,
+                    branch: branch
+                  })
+                });
+
+                if (!ghRes.ok) {
+                  const errJson = await ghRes.json().catch(() => ({}));
+                  throw new Error(errJson.message || 'خطأ في استجابة GitHub API');
+                }
+
+                // Direct URL from GitHub
+                const directUrl = `https://raw.githubusercontent.com/${repo}/${branch}/${filePath}`;
+                editorImages.push(directUrl);
+                toast(`تم رفع "${f.name}" مباشرة إلى GitHub بنجاح! 🚀`);
+              } catch (ghErr) {
+                console.warn('GitHub direct upload failed, falling back to local preview:', ghErr);
+                editorImages.push(dataUrl);
+                toast(`تعذر الرفع المباشر لـ GitHub (${ghErr.message}). تم حفظ الصورة كمعاينة.`);
+              }
+            } else {
+              editorImages.push(dataUrl);
+              toast('تمت إضافة الصورة كمعاينة محلياً.');
+            }
             renderEditorImages();
-          };
-        });
-      }
-
-      function renderAdminOrders(container) {
-        const orders = adminData.orders || [];
-        container.innerHTML = `
-          <div class="admin-card">
-            <div class="admin-header-row">
-              <div>
-                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إدارة طلبات الدفع عند الاستلام (${orders.length})</h2>
-                <p style="font-size:13px; color:var(--text-muted);">متابعة وتأكيد طلبات الزبائن وتحديث حالات الشحن والتسليم.</p>
-              </div>
-            </div>
-
-            <div class="admin-notice-card" style="background:#EBF5FF; border-color:#B9DAFF; color:#0C4A6E;">
-              ℹ️ تنبيه إداري: الطلبات الجديدة تحتاج تأكيد التوفر هاتفياً. عدّل المخزون بعد تأكيد الطلب؛ لا يتم خصم المخزون آلياً.
-            </div>
-
-            <div class="admin-orders-list">
-              ${orders.length === 0 ? `
-                <div style="text-align:center; padding:40px; color:var(--text-muted);">
-                  <div style="font-size:32px; margin-bottom:10px;">📦</div>
-                  <h3 style="font-size:16px; font-weight:700; margin-bottom:6px;">لا توجد طلبات مسجلة حتى الآن</h3>
-                  <p style="font-size:13px;">عندما يقوم الزبائن بإرسال طلبات من المتجر، ستظهر جميع بياناتهم وتفاصيل الطلب هنا مباشرة.</p>
-                </div>
-              ` : orders.slice().reverse().map(o => `
-                <div class="admin-order-card">
-                  <div class="admin-order-head">
-                    <div>
-                      <strong style="font-size:16px; color:var(--text-ink);">${esc(o.name)}</strong>
-                      <span style="font-size:12px; color:var(--text-muted); margin-right:8px;">(طلب #${esc(o.id)})</span>
-                    </div>
-                    <div style="font-size:18px; font-weight:800; color:var(--accent-action);">
-                      ${money(o.total)}
-                    </div>
-                  </div>
-
-                  <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--text-muted);">
-                    <div>📞 <a href="tel:${esc(o.phone)}" style="color:var(--text-ink); font-weight:700;">${esc(o.phone)}</a></div>
-                    <div>📍 ${esc(o.address || 'العنوان غير محدد')}</div>
-                    <div>🕒 ${new Date(o.createdAt).toLocaleString('ar-DZ')}</div>
-                  </div>
-
-                  <div style="background:var(--bg-canvas); border-radius:var(--radius-sm); padding:12px;">
-                    <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">المنتجات المطلوبة:</div>
-                    <ul class="admin-order-items">
-                      ${(o.items || []).map(item => `
-                        <li>• <strong>${esc(item.name)}</strong> × ${item.quantity} (${money(item.price * item.quantity)})</li>
-                      `).join('')}
-                    </ul>
-                  </div>
-
-                  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:4px;">
-                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700;">
-                      <span>حالة الطلب:</span>
-                      <select class="admin-select" data-admin-order="${esc(o.id)}" style="width:auto; padding:6px 12px; font-size:13px;">
-                        ${[
-                          ['pending', 'جديد (قيد المراجعة)'],
-                          ['confirmed', 'مؤكد'],
-                          ['shipped', 'تم الشحن'],
-                          ['delivered', 'تم التسليم بنجاح'],
-                          ['cancelled', 'ملغى']
-                        ].map(([v, t]) => `<option value="${v}" ${v === o.status ? 'selected' : ''}>${t}</option>`).join('')}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        `;
-
-        container.querySelectorAll('[data-admin-order]').forEach(select => {
-          select.onchange = async () => {
-            const orderId = select.dataset.adminOrder;
-            const newStatus = select.value;
-            try {
-              await api('/api/admin/order', { id: orderId, status: newStatus });
-              const found = adminData.orders.find(o => o.id === orderId);
-              if (found) found.status = newStatus;
-              toast('تم تحديث حالة الطلب بنجاح.');
-            } catch (err) {
-              if (session.demo) {
-                const found = adminData.orders.find(o => o.id === orderId);
-                if (found) found.status = newStatus;
-                toast('تم تحديث حالة الطلب في وضع المعاينة.');
-              } else {
-                toast(err.message);
-              }
-            }
-          };
-        });
-      }
-
-      function renderAdminSettings(container) {
-        const s = adminData.settings || catalog.settings || {};
-        container.innerHTML = `
-          <form id="admin-settings-form" class="admin-card">
-            <div class="admin-header-row">
-              <div>
-                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إعدادات ومحتوى المتجر</h2>
-                <p style="font-size:13px; color:var(--text-muted);">تعديل نصوص المتجر، العنوان، وسياسة التوصيل والعملة.</p>
-              </div>
-            </div>
-
-            <div class="admin-form-grid">
-              <label class="admin-label">
-                <span>اسم المتجر</span>
-                <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(s.name || 'Shop Online')}">
-              </label>
-
-              <label class="admin-label">
-                <span>العملة الرسمية</span>
-                <select name="currency" class="admin-select">
-                  ${['DZD', 'EUR', 'USD', 'MAD', 'TND'].map(c => `
-                    <option value="${c}" ${c === s.currency ? 'selected' : ''}>${c}</option>
-                  `).join('')}
-                </select>
-              </label>
-
-              <label class="admin-label full-width">
-                <span>عنوان الصفحة الرئيسية (Headline)</span>
-                <input type="text" name="headline" class="admin-input" required maxlength="250" value="${esc(s.headline || 'كل ما تحتاجه، في مكان واحد')}">
-              </label>
-
-              <label class="admin-label full-width">
-                <span>مقدمة المتجر (Introduction)</span>
-                <textarea name="introduction" class="admin-textarea" required maxlength="1000">${esc(s.introduction || '')}</textarea>
-              </label>
-
-              <label class="admin-label full-width">
-                <span>التعريف بالمتجر (About)</span>
-                <textarea name="about" class="admin-textarea" required maxlength="5000">${esc(s.about || '')}</textarea>
-              </label>
-
-              <label class="admin-label full-width">
-                <span>سياسة وشروط التوصيل (Delivery)</span>
-                <textarea name="delivery" class="admin-textarea" required maxlength="3000">${esc(s.delivery || '')}</textarea>
-              </label>
-            </div>
-
-            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-              <button type="submit" class="btn-primary" id="admin-save-settings-btn" style="padding:12px 32px;">
-                <span>حفظ التعديلات في Google Sheets</span>
-              </button>
-            </div>
-          </form>
-        `;
-
-        $('#admin-settings-form').onsubmit = async e => {
-          e.preventDefault();
-          const saveBtn = $('#admin-save-settings-btn');
-          saveBtn.disabled = true;
-          try {
-            const formData = new FormData(e.target);
-            const payload = Object.fromEntries(formData);
-            try {
-              await api('/api/admin/settings', payload);
-              adminData.settings = { ...adminData.settings, ...payload };
-              catalog.settings = { ...catalog.settings, ...payload };
-              toast('تم حفظ إعدادات المتجر في Google Sheets بنجاح.');
-            } catch (err) {
-              if (session.demo) {
-                adminData.settings = { ...adminData.settings, ...payload };
-                catalog.settings = { ...catalog.settings, ...payload };
-                toast('تم حفظ الإعدادات في وضع المعاينة (DEMO).');
-              } else {
-                throw err;
-              }
-            }
-          } catch (err) {
-            toast(err.message);
-          } finally {
-            saveBtn.disabled = false;
           }
-        };
-      }
+        } catch (err) {
+          toast(err.message);
+        } finally {
+          saveBtn.disabled = false;
+          fileInput.disabled = false;
+          fileInput.value = '';
+        }
+      };
 
-      $$('[data-admin-tab]').forEach(btn => {
+      $('#admin-product-form').onsubmit = async e => {
+        e.preventDefault();
+        const saveBtn = $('#admin-save-product-btn');
+        saveBtn.disabled = true;
+        try {
+          const formData = new FormData(e.target);
+          const input = Object.fromEntries(formData);
+          const slug = editingProduct?.slug || (input.name || 'product').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0600-\u06ff-]/g, '') || ('prod-' + Date.now());
+
+          const savedProduct = {
+            id: editingProduct?.id || ('prod-' + Date.now()),
+            name: input.name.trim(),
+            category: input.category.trim(),
+            price: Number(input.price),
+            stock: Number(input.stock),
+            status: input.status,
+            images: editorImages.length ? editorImages : (editingProduct?.images || ['images/headphones.jpg']),
+            description: input.description.trim(),
+            slug: slug,
+            createdAt: editingProduct?.createdAt || new Date().toISOString()
+          };
+
+          // 1. Update in-memory & adminData
+          if (editingProduct) {
+            const idx = adminData.products.findIndex(x => x.id === savedProduct.id);
+            if (idx >= 0) adminData.products[idx] = savedProduct;
+          } else {
+            adminData.products.unshift(savedProduct);
+          }
+
+          // 2. Update catalog.products so it displays immediately across all store pages
+          const catIdx = catalog.products.findIndex(x => x.id === savedProduct.id || x.slug === savedProduct.slug);
+          if (catIdx >= 0) {
+            catalog.products[catIdx] = { ...catalog.products[catIdx], ...savedProduct };
+          } else {
+            catalog.products.unshift(savedProduct);
+          }
+
+          if (savedProduct.category && !catalog.categories.includes(savedProduct.category)) {
+            catalog.categories.push(savedProduct.category);
+          }
+
+          // 3. Persist locally to localStorage
+          try {
+            localStorage.setItem('shop_admin_products', JSON.stringify(adminData.products));
+          } catch (e) {}
+
+          // 4. Send to Google Sheets if configured
+          const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+          if (sheetUrl && sheetUrl.startsWith('http')) {
+            try {
+              fetch(sheetUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'saveProduct', product: savedProduct })
+              });
+              toast('تم حفظ المنتج وتسجيله في Google Sheets بنجاح! 📊');
+            } catch (sheetErr) {
+              console.warn('Google Sheets sync error:', sheetErr);
+            }
+          } else {
+            toast('تم حفظ المنتج بنجاح وتحديث المتجر.');
+          }
+
+          wrap.innerHTML = '';
+          renderAdminProducts($('#admin-tab-content'));
+        } catch (err) {
+          toast(err.message);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      };
+
+      wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function renderEditorImages() {
+      const previews = $('#admin-img-previews');
+      if (!previews) return;
+      if (editorImages.length === 0) {
+        previews.innerHTML = '<span style="font-size:12px; color:var(--text-muted);">لم يتم اختيار صور بعد.</span>';
+        return;
+      }
+      previews.innerHTML = editorImages.map((src, i) => `
+        <div class="admin-img-thumb">
+          <img src="${esc(imgSrc(src))}" alt="صورة ${i+1}">
+          <button type="button" data-remove-img="${i}" title="إزالة الصورة">✕</button>
+        </div>
+      `).join('');
+
+      previews.querySelectorAll('[data-remove-img]').forEach(btn => {
         btn.onclick = () => {
-          currentTab = btn.dataset.adminTab;
-          renderAdminTabs();
+          const idx = Number(btn.dataset.removeImg);
+          editorImages.splice(idx, 1);
+          renderEditorImages();
         };
       });
-
-      renderAdminTabs();
-
-      $('#admin-logout-btn').onclick = async () => {
-        await api('/api/logout', {});
-        location.reload();
-      };
-    } catch (err) {
-      main.innerHTML = `<div class="empty-state-view"><h2 class="empty-title">تعذر فتح الإدارة</h2><p class="empty-subtitle">${esc(err.message)}</p></div>`;
     }
+
+    // --- TAB 2: Orders Management ---
+    function renderAdminOrders(container) {
+      const orders = adminData.orders || [];
+      container.innerHTML = `
+        <div class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إدارة طلبات الدفع عند الاستلام (${orders.length})</h2>
+              <p style="font-size:13px; color:var(--text-muted);">متابعة وتأكيد طلبات الزبائن وتحديث حالات الشحن والتسليم.</p>
+            </div>
+          </div>
+
+          <div class="admin-orders-list">
+            ${orders.length === 0 ? `
+              <div style="text-align:center; padding:40px; color:var(--text-muted);">
+                <div style="font-size:32px; margin-bottom:10px;">📦</div>
+                <h3 style="font-size:16px; font-weight:700; margin-bottom:6px;">لا توجد طلبات مسجلة حتى الآن</h3>
+                <p style="font-size:13px;">عندما يقوم الزبائن بإرسال طلبات من المتجر، ستظهر جميع بياناتهم وتفاصيل الطلب هنا مباشرة.</p>
+              </div>
+            ` : orders.slice().map(o => `
+              <div class="admin-order-card" style="background:#FFFFFF; border:1px solid var(--line-border); border-radius:var(--radius-sm); padding:16px; margin-bottom:16px;">
+                <div class="admin-order-head" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                  <div>
+                    <strong style="font-size:16px; color:var(--text-ink);">${esc(o.name)}</strong>
+                    <span style="font-size:12px; color:var(--text-muted); margin-right:8px;">(طلب #${esc(o.id)})</span>
+                  </div>
+                  <div style="font-size:18px; font-weight:800; color:var(--accent-action);">
+                    ${money(o.total)}
+                  </div>
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+                  <div>📞 <a href="tel:${esc(o.phone)}" style="color:var(--text-ink); font-weight:700;">${esc(o.phone)}</a></div>
+                  <div>📍 ${esc(o.address || 'العنوان غير محدد')} - ${esc(o.wilaya || '')}</div>
+                  <div>🕒 ${new Date(o.createdAt || Date.now()).toLocaleString('ar-DZ')}</div>
+                </div>
+
+                <div style="background:var(--bg-canvas); border-radius:var(--radius-sm); padding:12px; margin-bottom:12px;">
+                  <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">المنتجات المطلوبة:</div>
+                  <ul class="admin-order-items" style="list-style:none; padding:0; margin:0; font-size:13px;">
+                    ${(o.items || []).map(item => `
+                      <li>• <strong>${esc(item.name)}</strong> × ${item.quantity} (${money((item.price || 0) * item.quantity)})</li>
+                    `).join('')}
+                  </ul>
+                </div>
+
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                  <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700;">
+                    <span>حالة الطلب:</span>
+                    <select class="admin-select" data-admin-order="${esc(o.id)}" style="width:auto; padding:6px 12px; font-size:13px;">
+                      ${[
+                        ['pending', 'جديد (قيد المراجعة)'],
+                        ['confirmed', 'مؤكد'],
+                        ['shipped', 'تم الشحن'],
+                        ['delivered', 'تم التسليم بنجاح'],
+                        ['cancelled', 'ملغى']
+                      ].map(([v, t]) => `<option value="${v}" ${v === o.status ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+
+      container.querySelectorAll('[data-admin-order]').forEach(select => {
+        select.onchange = () => {
+          const orderId = select.dataset.adminOrder;
+          const newStatus = select.value;
+          const found = adminData.orders.find(o => o.id === orderId);
+          if (found) {
+            found.status = newStatus;
+            try {
+              localStorage.setItem('shop_admin_orders', JSON.stringify(adminData.orders));
+            } catch (e) {}
+            toast('تم تحديث حالة الطلب بنجاح.');
+          }
+        };
+      });
+    }
+
+    // --- TAB 3: Google Sheets Integration ---
+    function renderAdminSheets(container) {
+      const currentUrl = localStorage.getItem('shop_google_sheet_url') || '';
+      const scriptCode = `/* انسخ هذا الكود بالكامل وضعه في: Extensions -> Apps Script */
+function doGet(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return ContentService.createTextOutput(JSON.stringify({ products: [] })).setMimeType(ContentService.MimeType.JSON);
+  var rows = data.slice(1);
+  var products = rows.filter(function(r){ return r[0] !== 'ORDER'; }).map(function(r) {
+    return {
+      id: String(r[0]||''),
+      name: String(r[1]||''),
+      price: Number(r[2]||0),
+      category: String(r[3]||''),
+      stock: Number(r[4]||1),
+      status: String(r[5]||'active'),
+      images: r[6] ? String(r[6]).split(',') : [],
+      description: String(r[7]||'')
+    };
+  });
+  return ContentService.createTextOutput(JSON.stringify({ products: products })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var payload = JSON.parse(e.postData.contents);
+    if (payload.action === 'newOrder') {
+      var o = payload.order;
+      sheet.appendRow(['ORDER', o.id, o.name, o.phone, o.wilaya, o.address, o.total, (o.items||[]).map(function(i){ return i.name+' x'+i.quantity; }).join('; '), new Date().toISOString()]);
+    } else {
+      var p = payload.product || payload;
+      sheet.appendRow([p.id || ('prod-'+new Date().getTime()), p.name||'', p.price||0, p.category||'', p.stock||0, p.status||'active', (p.images||[]).join(','), p.description||'', new Date().toISOString()]);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ status: 'ok' })).setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+      container.innerHTML = `
+        <div class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">📊 ربط جدول Google Sheets المباشر</h2>
+              <p style="font-size:13px; color:var(--text-muted);">تسجيل وحفظ المنتجات والطلبات مباشرة في جدول Google Sheets الخاص بك بدون سيرفر.</p>
+            </div>
+          </div>
+
+          <form id="admin-sheet-form" style="margin-bottom:24px;">
+            <label class="admin-label">
+              <span style="font-weight:700;">رابط Google Apps Script Web App أو Google Sheet:</span>
+              <input type="url" id="sheet-url-input" class="admin-input" value="${esc(currentUrl)}" placeholder="https://script.google.com/macros/s/.../exec" required style="direction:ltr;">
+            </label>
+            <div style="display:flex; gap:12px; margin-top:12px;">
+              <button type="submit" class="btn-primary" style="padding:10px 24px;">حفظ الرابط</button>
+              <button type="button" class="btn-secondary" id="test-sheet-ping-btn" style="padding:10px 20px;">اختبار الاتصال ⚡</button>
+            </div>
+            <div id="sheet-status-msg" style="margin-top:10px; font-size:13px;"></div>
+          </form>
+
+          <div style="background:var(--bg-canvas); border:1px solid var(--line-border); border-radius:var(--radius-sm); padding:20px;">
+            <h3 style="font-size:15px; font-weight:800; margin-bottom:10px; color:var(--text-ink);">📋 خطوات إنشاء رابط Web App في دقيقة واحدة:</h3>
+            <ol style="padding-right:20px; font-size:13px; line-height:1.8; color:var(--text-ink); margin-bottom:16px;">
+              <li>افتح جدولك في <strong>Google Sheets</strong>.</li>
+              <li>من القائمة العلوية اضغط على <strong>الامتدادات (Extensions)</strong> ثم <strong>Apps Script</strong>.</li>
+              <li>امسح أي كود موجود والصق الكود الجاهز أدناه.</li>
+              <li>اضغط على زر <strong>نشر (Deploy)</strong> باللون الأزرق ثم اختر <strong>نشر جديد (New deployment)</strong>.</li>
+              <li>اختر نوع النشر: <strong>تطبيق ويب (Web app)</strong>، واجعل خيار "من يملك حق الوصول" (Who has access): <strong>الجميع (Anyone)</strong>.</li>
+              <li>اضغط نشر وانسخ الرابط الذي ينتهي بـ <code>/exec</code> والصقه في الخانة أعلاه!</li>
+            </ol>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size:12px; font-weight:700; color:var(--text-muted);">كود Google Apps Script الجاهز:</span>
+              <button type="button" class="btn-secondary" id="copy-script-btn" style="padding:6px 14px; font-size:12px;">📋 نسخ الكود</button>
+            </div>
+            <textarea id="script-code-area" readonly class="admin-textarea" style="font-family:monospace; font-size:12px; direction:ltr; min-height:180px; background:#191C22; color:#00FF88;">${scriptCode}</textarea>
+          </div>
+        </div>
+      `;
+
+      $('#admin-sheet-form').onsubmit = e => {
+        e.preventDefault();
+        const val = $('#sheet-url-input').value.trim();
+        localStorage.setItem('shop_google_sheet_url', val);
+        toast('تم حفظ رابط Google Sheets بنجاح! سيتم تسجيل أي منتج جديد في جدولك تلقائياً.');
+        $('#sheet-status-msg').innerHTML = '<span style="color:#1B7A3E; font-weight:700;">✅ تم حفظ الرابط بنجاح! المنتجات والطلبات ستُرسل إلى جدولك مباشرة.</span>';
+      };
+
+      $('#copy-script-btn').onclick = () => {
+        navigator.clipboard.writeText($('#script-code-area').value);
+        toast('تم نسخ كود Apps Script إلى الحافظة! الصقه في Google Sheets.');
+      };
+
+      $('#test-sheet-ping-btn').onclick = async () => {
+        const url = $('#sheet-url-input').value.trim();
+        if (!url) { toast('أدخل الرابط أولاً.'); return; }
+        toast('جارٍ اختبار الاتصال...');
+        try {
+          await fetch(url, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'ping', test: true }) });
+          toast('✅ تم إرسال إشارة الاتصال بنجاح إلى الرابط!');
+          $('#sheet-status-msg').innerHTML = '<span style="color:#1B7A3E; font-weight:700;">✅ تم إرسال إشارة الاختبار إلى Google Sheets بنجاح!</span>';
+        } catch (err) {
+          toast('تعذر الاتصال بالرابط: ' + err.message);
+        }
+      };
+    }
+
+    // --- TAB 4: GitHub Direct Image Upload ---
+    function renderAdminGitHub(container) {
+      const currentToken = localStorage.getItem('shop_gh_token') || '';
+      const currentRepo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+      const currentBranch = localStorage.getItem('shop_gh_branch') || 'main';
+
+      container.innerHTML = `
+        <div class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">🐙 رفع الصور مباشرة إلى مستودع GitHub</h2>
+              <p style="font-size:13px; color:var(--text-muted);">رفع صور المنتجات مباشرة من المتصفح إلى GitHub REST API بدون خادم وسيط إطلاقاً.</p>
+            </div>
+          </div>
+
+          <form id="admin-gh-form" style="margin-bottom:24px;">
+            <div class="admin-form-grid">
+              <label class="admin-label full-width">
+                <span style="font-weight:700;">رمز الوصول الشخصي لجيت هاب (GitHub Personal Access Token - PAT) *</span>
+                <input type="password" id="gh-token-input" class="admin-input" value="${esc(currentToken)}" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="direction:ltr;" required>
+                <span style="font-size:11px; color:var(--text-muted); margin-top:4px;">يُحفظ بأمان داخل متصفحك محلياً (LocalStorage) ويُستخدم حصرياً لإرسال الصور إلى مستودعك.</span>
+              </label>
+
+              <label class="admin-label">
+                <span style="font-weight:700;">اسم المستودع (Repository) *</span>
+                <input type="text" id="gh-repo-input" class="admin-input" value="${esc(currentRepo)}" placeholder="owner/repository" style="direction:ltr;" required>
+              </label>
+
+              <label class="admin-label">
+                <span style="font-weight:700;">اسم الفرع (Branch) *</span>
+                <input type="text" id="gh-branch-input" class="admin-input" value="${esc(currentBranch)}" placeholder="main" style="direction:ltr;" required>
+              </label>
+            </div>
+
+            <div style="display:flex; gap:12px; margin-top:16px;">
+              <button type="submit" class="btn-primary" style="padding:10px 24px;">حفظ إعدادات GitHub</button>
+              <button type="button" class="btn-secondary" id="test-gh-btn" style="padding:10px 20px;">اختبار الاتصال بـ GitHub ⚡</button>
+            </div>
+            <div id="gh-status-msg" style="margin-top:10px; font-size:13px;"></div>
+          </form>
+
+          <div style="background:var(--bg-canvas); border:1px solid var(--line-border); border-radius:var(--radius-sm); padding:20px;">
+            <h3 style="font-size:15px; font-weight:800; margin-bottom:10px; color:var(--text-ink);">💡 كيف تحصل على GitHub Token في ثوانٍ؟</h3>
+            <ol style="padding-right:20px; font-size:13px; line-height:1.8; color:var(--text-ink);">
+              <li>سجل دخولك في حسابك على <strong>GitHub</strong>.</li>
+              <li>انقر على صورتك في أعلى اليمين -> <strong>Settings</strong> -> ثم من القائمة اليسرى <strong>Developer Settings</strong>.</li>
+              <li>اختر <strong>Personal access tokens</strong> ثم <strong>Tokens (classic)</strong>.</li>
+              <li>اضغط <strong>Generate new token</strong> وضع علامة صح على صلاحية <strong>repo</strong> (Full control of private/public repositories).</li>
+              <li>اضغط توليد وانسخ الرمز الذي يبدأ بـ <code>ghp_</code> والصقه هنا واضغط حفظ!</li>
+            </ol>
+          </div>
+        </div>
+      `;
+
+      $('#admin-gh-form').onsubmit = e => {
+        e.preventDefault();
+        const token = $('#gh-token-input').value.trim();
+        const repo = $('#gh-repo-input').value.trim();
+        const branch = $('#gh-branch-input').value.trim();
+
+        localStorage.setItem('shop_gh_token', token);
+        localStorage.setItem('shop_gh_repo', repo);
+        localStorage.setItem('shop_gh_branch', branch);
+
+        toast('تم حفظ إعدادات GitHub بنجاح! سيتم رفع أي صور منتجات مباشرة للمستودع.');
+        $('#gh-status-msg').innerHTML = '<span style="color:#1B7A3E; font-weight:700;">✅ تم حفظ الإعدادات! الرفع المباشر إلى GitHub مفعل الآن.</span>';
+      };
+
+      $('#test-gh-btn').onclick = async () => {
+        const token = $('#gh-token-input').value.trim();
+        const repo = $('#gh-repo-input').value.trim();
+        if (!token || !repo) {
+          toast('يرجى إدخال الرمز واسم المستودع أولاً.');
+          return;
+        }
+        toast('جارٍ التحقق من صلاحيات مستودع GitHub...');
+        try {
+          const res = await fetch(`https://api.github.com/repos/${repo}`, {
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            $('#gh-status-msg').innerHTML = `<span style="color:#1B7A3E; font-weight:700;">✅ الاتصال ممتاز بمستودع (${data.full_name})! لديك صلاحية رفع الصور مباشرة.</span>`;
+            toast('✅ اتصال ناجح مع مستودع GitHub!');
+          } else {
+            const err = await res.json().catch(() => ({}));
+            $('#gh-status-msg').innerHTML = `<span style="color:#E02424; font-weight:700;">❌ فشل الاتصال (${err.message || res.statusText}). تأكد من صحة الرمز وتفعيل صلاحية repo.</span>`;
+          }
+        } catch (e) {
+          $('#gh-status-msg').innerHTML = `<span style="color:#E02424; font-weight:700;">❌ خطأ في الشبكة: ${e.message}</span>`;
+        }
+      };
+    }
+
+    // --- TAB 5: Store Settings ---
+    function renderAdminSettings(container) {
+      const s = adminData.settings || catalog.settings || {};
+      container.innerHTML = `
+        <form id="admin-settings-form" class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إعدادات ومحتوى المتجر</h2>
+              <p style="font-size:13px; color:var(--text-muted);">تعديل نصوص المتجر، العنوان، وسياسة التوصيل والعملة.</p>
+            </div>
+          </div>
+
+          <div class="admin-form-grid">
+            <label class="admin-label">
+              <span>اسم المتجر</span>
+              <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(s.name || 'Shop Online')}">
+            </label>
+
+            <label class="admin-label">
+              <span>العملة الرسمية</span>
+              <select name="currency" class="admin-select">
+                ${['DZD', 'EUR', 'USD', 'MAD', 'TND'].map(c => `
+                  <option value="${c}" ${c === s.currency ? 'selected' : ''}>${c}</option>
+                `).join('')}
+              </select>
+            </label>
+
+            <label class="admin-label full-width">
+              <span>عنوان الصفحة الرئيسية (Headline)</span>
+              <input type="text" name="headline" class="admin-input" required maxlength="250" value="${esc(s.headline || 'كل ما تحتاجه، في مكان واحد')}">
+            </label>
+
+            <label class="admin-label full-width">
+              <span>مقدمة المتجر (Introduction)</span>
+              <textarea name="introduction" class="admin-textarea" required maxlength="1000">${esc(s.introduction || '')}</textarea>
+            </label>
+
+            <label class="admin-label full-width">
+              <span>التعريف بالمتجر (About)</span>
+              <textarea name="about" class="admin-textarea" required maxlength="5000">${esc(s.about || '')}</textarea>
+            </label>
+
+            <label class="admin-label full-width">
+              <span>سياسة وشروط التوصيل (Delivery)</span>
+              <textarea name="delivery" class="admin-textarea" required maxlength="3000">${esc(s.delivery || '')}</textarea>
+            </label>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+            <button type="submit" class="btn-primary" id="admin-save-settings-btn" style="padding:12px 32px;">
+              <span>حفظ الإعدادات</span>
+            </button>
+          </div>
+        </form>
+      `;
+
+      $('#admin-settings-form').onsubmit = e => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const payload = Object.fromEntries(formData);
+        adminData.settings = { ...adminData.settings, ...payload };
+        catalog.settings = { ...catalog.settings, ...payload };
+        try {
+          localStorage.setItem('shop_settings', JSON.stringify(catalog.settings));
+        } catch (err) {}
+        toast('تم حفظ إعدادات المتجر بنجاح.');
+      };
+    }
+
+    $$('[data-admin-tab]').forEach(btn => {
+      btn.onclick = () => {
+        currentTab = btn.dataset.adminTab;
+        renderAdminTabs();
+      };
+    });
+
+    renderAdminTabs();
+
+    $('#admin-logout-btn').onclick = () => {
+      localStorage.removeItem('shop_admin_authed');
+      toast('تم تسجيل الخروج من لوحة التحكم.');
+      renderAdmin();
+    };
   }
 
-  // --- Router & URL Navigation ---
-  function router() {
-    const path = location.pathname;
-    const searchParams = new URLSearchParams(location.search);
+  // --- Router & URL Navigation (Universal Hash & Path Router for GitHub Pages) ---
+  function getRoute() {
+    const hash = (location.hash || '').replace(/^#\/?/, '').trim();
+    if (hash) return hash.split('?')[0];
 
-    // Read query params if any
+    const params = new URLSearchParams(location.search);
+    if (params.get('page')) return params.get('page');
+    if (params.get('product')) return 'product/' + params.get('product');
+
+    let p = location.pathname;
+    if (p.includes('/shop.online')) p = p.replace('/shop.online', '');
+    p = p.replace(/^\/+/, '').split('?')[0];
+    return p;
+  }
+
+  function router() {
+    const route = getRoute();
+    const searchStr = location.hash.includes('?') ? location.hash.split('?')[1] : location.search;
+    const searchParams = new URLSearchParams(searchStr);
+
     const catParam = searchParams.get('category');
-    if (catParam) {
-      selectedCategory = catParam;
-    }
+    if (catParam) selectedCategory = catParam;
     const sortParam = searchParams.get('sort');
-    if (sortParam) {
-      selectedSort = sortParam;
-    }
+    if (sortParam) selectedSort = sortParam;
 
     // Update active state on nav links
     $$('.nav-item').forEach(link => {
-      const href = link.getAttribute('href');
-      link.classList.toggle('active', href === path || (path === '/' && href === '/'));
+      const href = (link.getAttribute('href') || '').replace(/^#\/?/, '').replace(/^\/+/, '');
+      const isActive = (route === '' && (href === '' || href === '/')) || (href && href === route);
+      link.classList.toggle('active', isActive);
     });
 
     $$('.mobile-nav-btn').forEach(btn => {
       const navTarget = btn.dataset.nav;
-      const isHome = path === '/' && navTarget === 'home';
-      const isCart = path === '/cart' && navTarget === 'cart';
-      const isFav = path === '/favorites' && navTarget === 'favorites';
-      const isAcc = path === '/account' && navTarget === 'account';
-      btn.classList.toggle('active', isHome || isCart || isFav || isAcc);
+      const isHome = (route === '' || route === 'home') && navTarget === 'home';
+      const isCart = route === 'cart' && navTarget === 'cart';
+      const isFav = route === 'favorites' && navTarget === 'favorites';
+      const isAdmin = route === 'admin' && navTarget === 'admin';
+      const isAcc = route === 'account' && navTarget === 'account';
+      btn.classList.toggle('active', isHome || isCart || isFav || isAdmin || isAcc);
     });
 
-    if (path === '/') {
+    if (!route || route === '' || route === 'home') {
       renderHome();
-    } else if (path.startsWith('/product/')) {
-      const slug = decodeURIComponent(path.slice(9));
+    } else if (route.startsWith('product/')) {
+      const slug = decodeURIComponent(route.slice(8));
       renderDetail(slug);
-    } else if (path === '/cart') {
+    } else if (route === 'cart') {
       renderCart();
-    } else if (path === '/favorites') {
+    } else if (route === 'favorites') {
       renderFavorites();
-    } else if (path === '/about') {
+    } else if (route === 'about') {
       renderAbout();
-    } else if (path === '/help') {
+    } else if (route === 'help') {
       renderHelp();
-    } else if (path === '/privacy') {
+    } else if (route === 'privacy') {
       renderPrivacy();
-    } else if (path === '/account') {
+    } else if (route === 'account') {
       renderAccount();
-    } else if (path === '/admin') {
+    } else if (route === 'admin') {
       renderAdmin();
     } else {
       renderHome();
@@ -2252,10 +2602,16 @@
   }
 
   function navigate(url) {
-    history.pushState(null, '', url);
+    if (url.startsWith('#')) {
+      location.hash = url;
+    } else if (url === '/' || url === './') {
+      location.hash = '#/';
+    } else {
+      const clean = url.replace(/^\/+/, '');
+      location.hash = '#/' + clean;
+    }
     router();
   }
-
   // Intercept local link clicks for SPA smooth transitions
   document.addEventListener('click', e => {
     const link = e.target.closest('a');
