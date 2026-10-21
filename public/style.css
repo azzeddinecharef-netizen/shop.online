@@ -50,6 +50,10 @@
   padding: 0;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html {
   font-size: 16px;
   scroll-behavior: smooth;
@@ -1955,6 +1959,10 @@ img {
   justify-content: center;
   padding: 20px;
   animation: fadeIn 0.2s ease-out;
+}
+
+.modal-backdrop[hidden] {
+  display: none !important;
 }
 
 .modal-dialog {

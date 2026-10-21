@@ -1875,6 +1875,19 @@
     setupSearchInputs();
     setupCategoriesDropdown();
 
+    // Global Modal backdrop & ESC close handler
+    const backdrop = $('#modal-backdrop');
+    const closeBtn = $('#modal-close');
+    if (closeBtn && backdrop) {
+      closeBtn.onclick = () => { backdrop.hidden = true; };
+      backdrop.onclick = e => { if (e.target === backdrop) backdrop.hidden = true; };
+      window.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !backdrop.hidden) {
+          backdrop.hidden = true;
+        }
+      });
+    }
+
     try {
       const data = await api('/api/catalog');
       if (data && data.products) {
