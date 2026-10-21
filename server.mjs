@@ -137,4 +137,4 @@ http.createServer(async(req,res)=>{
     }
     res.setHeader('Content-Type','text/html; charset=utf-8');res.setHeader('Cache-Control','no-store');res.end(html);
   }catch(error){ json(res,{error:error.message?.startsWith('تع')||/[\u0600-\u06ff]/.test(error.message)?error.message:'تعذّر إتمام العملية. راجع إعدادات الخدمة وحاول مجددًا.'},400); }
-}).listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Shop Online: ${origin} (${demo?'DEMO — writes disabled':'connected mode'})`));
+}).listen(Number(process.env.PORT||3000),process.env.HOST||'0.0.0.0',()=>console.log(`Shop Online: ${origin} (${demo?'DEMO — writes disabled':'connected mode'})`));
