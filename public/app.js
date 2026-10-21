@@ -1631,52 +1631,502 @@
       }
 
       adminData = await api(session.demo ? '/api/demo/admin' : '/api/admin/data');
-      catalog.settings = adminData.settings;
+      catalog.settings = adminData.settings || catalog.settings;
 
       main.innerHTML = `
         <div class="page-container-narrow" style="max-width:1100px;">
-          <div class="cart-title-row">
+          <div class="cart-title-row" style="margin-bottom:16px;">
             <div>
               <span class="hero-tag">ADMIN DASHBOARD</span>
-              <h1 class="page-header-title">إدارة المتجر</h1>
+              <h1 class="page-header-title">لوحة إدارة المتجر</h1>
             </div>
             <button type="button" class="btn-continue-shopping" id="admin-logout-btn">تسجيل الخروج</button>
           </div>
 
-          <div class="filter-chips" style="margin-bottom:20px;">
-            <button type="button" class="chip-btn active" data-admin-tab="products">المنتجات (${adminData.products.length})</button>
-            <button type="button" class="chip-btn" data-admin-tab="orders">الطلبات (${adminData.orders.length})</button>
-            <button type="button" class="chip-btn" data-admin-tab="settings">إعدادات المتجر</button>
+          <div class="admin-notice-card">
+            <div style="font-size:22px; line-height:1; flex-shrink:0;">💡</div>
+            <div>
+              <strong>أهلاً بك في لوحة تحكم المتجر:</strong>
+              ${session.demo ? 'المتجر يعمل حالياً في وضع المعاينة (DEMO Mode) الآمن. يمكنك تجربة كافة خصائص الإدارة (إضافة منتجات، تعديل، رفع صور، إدارة الطلبات، والإعدادات). لتفعيل الحفظ الدائم، يتم ربط Google Sheets و GitHub Token في متغيرات السيرفر.' : 'المتجر مربوط بالكامل ويتم حفظ المنتجات في Google Sheets والصور في GitHub مباشرة.'}
+            </div>
           </div>
 
-          <div id="admin-tab-content">
-            <div style="background:#FFFFFF; border:1px solid var(--line-border); border-radius:var(--radius-md); padding:20px; overflow-x:auto;">
-              <table style="width:100%; border-collapse:collapse; font-size:14px; text-align:right;">
+          <div class="filter-chips" style="margin-bottom:20px;">
+            <button type="button" class="chip-btn active" data-admin-tab="products">المنتجات (${adminData.products.length})</button>
+            <button type="button" class="chip-btn" data-admin-tab="orders">إدارة الطلبات (${(adminData.orders || []).length})</button>
+            <button type="button" class="chip-btn" data-admin-tab="settings">إعدادات ومحتوى المتجر</button>
+          </div>
+
+          <div id="admin-tab-content"></div>
+        </div>
+      `;
+
+      let editingProduct = null;
+      let editorImages = [];
+      let currentTab = 'products';
+
+      function renderAdminTabs() {
+        const tabContent = $('#admin-tab-content');
+        if (!tabContent) return;
+
+        $$('[data-admin-tab]').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.adminTab === currentTab);
+        });
+
+        if (currentTab === 'products') {
+          renderAdminProducts(tabContent);
+        } else if (currentTab === 'orders') {
+          renderAdminOrders(tabContent);
+        } else if (currentTab === 'settings') {
+          renderAdminSettings(tabContent);
+        }
+      }
+
+      function renderAdminProducts(container) {
+        container.innerHTML = `
+          <div class="admin-card">
+            <div class="admin-header-row">
+              <div>
+                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">قائمة المنتجات (${adminData.products.length})</h2>
+                <p style="font-size:13px; color:var(--text-muted);">إدارة وتعديل المنتجات المنشورة والمخزون والأسعار.</p>
+              </div>
+              <button type="button" class="btn-primary" id="admin-new-product-btn" style="padding:10px 20px; font-size:14px;">
+                <span>+ إضافة منتج جديد</span>
+              </button>
+            </div>
+
+            <div id="admin-editor-wrap" style="margin-bottom:24px;"></div>
+
+            <div class="admin-table-wrap">
+              <table class="admin-table">
                 <thead>
-                  <tr style="border-bottom:2px solid var(--line-border);">
-                    <th style="padding:10px;">المنتج</th>
-                    <th style="padding:10px;">القسم</th>
-                    <th style="padding:10px;">السعر</th>
-                    <th style="padding:10px;">المخزون</th>
-                    <th style="padding:10px;">الحالة</th>
+                  <tr>
+                    <th>المنتج</th>
+                    <th>القسم</th>
+                    <th>السعر</th>
+                    <th>المخزون</th>
+                    <th>الحالة</th>
+                    <th>إجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${adminData.products.map(p => `
-                    <tr style="border-bottom:1px solid var(--line-light);">
-                      <td style="padding:12px 10px; font-weight:700;">${esc(p.name)}</td>
-                      <td style="padding:12px 10px; color:var(--text-muted);">${esc(p.category)}</td>
-                      <td style="padding:12px 10px; font-weight:700;">${money(p.price)}</td>
-                      <td style="padding:12px 10px;">${p.stock}</td>
-                      <td style="padding:12px 10px;"><span style="background:#EAF7EE; color:#1B7A3E; padding:3px 8px; border-radius:var(--radius-pill); font-size:12px;">${esc(p.status)}</span></td>
+                  ${adminData.products.length === 0 ? `
+                    <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">لا توجد منتجات حتى الآن. اضغط "+ إضافة منتج جديد" للبدء.</td></tr>
+                  ` : adminData.products.map(p => `
+                    <tr>
+                      <td style="font-weight:700;">${esc(p.name)}</td>
+                      <td style="color:var(--text-muted);">${esc(p.category)}</td>
+                      <td style="font-weight:700; color:var(--text-ink);">${money(p.price)}</td>
+                      <td>${p.stock}</td>
+                      <td><span class="admin-badge ${esc(p.status)}">${p.status === 'active' ? 'منشور' : (p.status === 'draft' ? 'مسودة' : 'مؤرشف')}</span></td>
+                      <td>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <button type="button" class="btn-secondary" data-admin-edit="${esc(p.id)}" style="padding:6px 12px; font-size:12px;">تعديل</button>
+                          <a href="/product/${encodeURIComponent(p.slug)}" target="_blank" rel="noopener" style="font-size:12px; color:var(--accent-action); font-weight:700;">معاينة ↗</a>
+                        </div>
+                      </td>
                     </tr>
                   `).join('')}
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
-      `;
+        `;
+
+        $('#admin-new-product-btn').onclick = () => {
+          editingProduct = null;
+          editorImages = [];
+          openProductEditor();
+        };
+
+        container.querySelectorAll('[data-admin-edit]').forEach(btn => {
+          btn.onclick = () => {
+            const id = btn.dataset.adminEdit;
+            editingProduct = adminData.products.find(p => p.id === id);
+            editorImages = editingProduct ? [...(editingProduct.images || [])] : [];
+            openProductEditor();
+          };
+        });
+      }
+
+      function openProductEditor() {
+        const wrap = $('#admin-editor-wrap');
+        if (!wrap) return;
+
+        const p = editingProduct || { name: '', category: '', description: '', price: '', stock: 1, status: 'active', images: [] };
+        const categories = adminData.categories || ['إلكترونيات', 'أزياء وإكسسوارات', 'المنزل', 'أحذية', 'ساعات وإكسسوارات'];
+
+        wrap.innerHTML = `
+          <form id="admin-product-form" class="admin-card" style="background:#FAFBFD; border-color:var(--accent-coral);">
+            <div class="admin-header-row">
+              <h3 style="font-size:16px; font-weight:800; color:var(--text-ink);">${editingProduct ? 'تعديل المنتج' : 'إضافة منتج جديد'}</h3>
+              <button type="button" class="btn-secondary" id="admin-cancel-edit-btn" style="padding:6px 14px; font-size:12px;">إلغاء</button>
+            </div>
+
+            <div class="admin-form-grid">
+              <label class="admin-label">
+                <span>اسم المنتج *</span>
+                <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(p.name)}" placeholder="مثال: ساعة ذكية مقاومة للماء">
+              </label>
+
+              <label class="admin-label">
+                <span>القسم *</span>
+                <input type="text" name="category" list="admin-categories-datalist" class="admin-input" required maxlength="80" value="${esc(p.category)}" placeholder="اختر أو اكتب قسماً جديداً">
+                <datalist id="admin-categories-datalist">
+                  ${categories.map(c => `<option value="${esc(c)}">`).join('')}
+                </datalist>
+              </label>
+
+              <label class="admin-label">
+                <span>السعر (${esc(catalog.settings.currency)}) *</span>
+                <input type="number" name="price" class="admin-input" min="0.01" step="0.01" required value="${esc(p.price)}" placeholder="0.00">
+              </label>
+
+              <label class="admin-label">
+                <span>المخزون المتوفر *</span>
+                <input type="number" name="stock" class="admin-input" min="0" step="1" required value="${p.stock}">
+              </label>
+
+              <label class="admin-label">
+                <span>حالة المنتج</span>
+                <select name="status" class="admin-select">
+                  <option value="active" ${p.status === 'active' ? 'selected' : ''}>منشور (يظهر للزبائن في المتجر)</option>
+                  <option value="draft" ${p.status === 'draft' ? 'selected' : ''}>مسودة (مخفي)</option>
+                  <option value="archived" ${p.status === 'archived' ? 'selected' : ''}>مؤرشف (غير متاح للطلب)</option>
+                </select>
+              </label>
+
+              <label class="admin-label">
+                <span>رفع صور للمنتج (حتى 8 صور)</span>
+                <input type="file" id="admin-files-input" class="admin-input" accept="image/jpeg,image/png,image/webp" multiple>
+              </label>
+
+              <div class="full-width">
+                <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">معاينة صور المنتج:</div>
+                <div class="admin-image-previews" id="admin-img-previews"></div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
+                  📌 ملاحظة: عند حفظ الصور، يتم رفعها وتخزينها تلقائياً وبأمان في مستودع GitHub الخاص بك.
+                </div>
+              </div>
+
+              <label class="admin-label full-width">
+                <span>وصف المنتج</span>
+                <textarea name="description" class="admin-textarea" maxlength="6000" placeholder="اكتب تفاصيل ومميزات المنتج ومحتويات العلبة...">${esc(p.description)}</textarea>
+              </label>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+              <button type="submit" class="btn-primary" id="admin-save-product-btn" style="padding:12px 28px;">
+                <span>${editingProduct ? 'تحديث المنتج' : 'حفظ ونشر المنتج'}</span>
+              </button>
+            </div>
+          </form>
+        `;
+
+        renderEditorImages();
+
+        $('#admin-cancel-edit-btn').onclick = () => {
+          wrap.innerHTML = '';
+        };
+
+        const fileInput = $('#admin-files-input');
+        fileInput.onchange = async e => {
+          const files = [...e.target.files];
+          if (editorImages.length + files.length > 8) {
+            toast('الحد الأقصى 8 صور لكل منتج.');
+            return;
+          }
+          const saveBtn = $('#admin-save-product-btn');
+          saveBtn.disabled = true;
+          fileInput.disabled = true;
+
+          try {
+            for (const f of files) {
+              if (f.size > 3 * 1024 * 1024) throw new Error('كل صورة يجب أن تكون أقل من 3 MB.');
+              const base64Data = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(f);
+              });
+
+              try {
+                const res = await api('/api/admin/image', { base64: base64Data });
+                editorImages.push(res.path);
+              } catch (apiErr) {
+                // If in demo mode or GitHub token not provided, keep image for local preview
+                const localUrl = URL.createObjectURL(f);
+                editorImages.push(localUrl);
+                toast('تمت إضافة الصورة للمعاينة (تُرفع إلى GitHub عند تعيين GITHUB_TOKEN).');
+              }
+              renderEditorImages();
+            }
+            toast('تم تجهيز الصور بنجاح.');
+          } catch (err) {
+            toast(err.message);
+          } finally {
+            saveBtn.disabled = false;
+            fileInput.disabled = false;
+            fileInput.value = '';
+          }
+        };
+
+        $('#admin-product-form').onsubmit = async e => {
+          e.preventDefault();
+          const saveBtn = $('#admin-save-product-btn');
+          saveBtn.disabled = true;
+          try {
+            const formData = new FormData(e.target);
+            const input = Object.fromEntries(formData);
+            const payload = {
+              ...input,
+              id: editingProduct?.id,
+              images: editorImages,
+              price: Number(input.price),
+              stock: Number(input.stock)
+            };
+
+            try {
+              await api('/api/admin/product', payload);
+              toast('تم حفظ المنتج في Google Sheets بنجاح.');
+            } catch (saveErr) {
+              if (session.demo) {
+                if (editingProduct) {
+                  const idx = adminData.products.findIndex(x => x.id === editingProduct.id);
+                  if (idx >= 0) adminData.products[idx] = { ...adminData.products[idx], ...payload };
+                } else {
+                  const newP = {
+                    ...payload,
+                    id: 'prod-' + Date.now(),
+                    slug: (payload.name || 'product').toLowerCase().replace(/\s+/g, '-'),
+                    createdAt: new Date().toISOString()
+                  };
+                  adminData.products.unshift(newP);
+                }
+                toast('تم حفظ المنتج في وضع المعاينة (DEMO).');
+              } else {
+                throw saveErr;
+              }
+            }
+
+            wrap.innerHTML = '';
+            renderAdminProducts($('#admin-tab-content'));
+          } catch (err) {
+            toast(err.message);
+          } finally {
+            saveBtn.disabled = false;
+          }
+        };
+
+        wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      function renderEditorImages() {
+        const previews = $('#admin-img-previews');
+        if (!previews) return;
+        if (editorImages.length === 0) {
+          previews.innerHTML = '<span style="font-size:12px; color:var(--text-muted);">لم يتم اختيار صور بعد.</span>';
+          return;
+        }
+        previews.innerHTML = editorImages.map((src, i) => `
+          <div class="admin-img-thumb">
+            <img src="${src.startsWith('blob:') || src.startsWith('http') || src.startsWith('data:') ? src : '/' + esc(src)}" alt="صورة ${i+1}">
+            <button type="button" data-remove-img="${i}" title="إزالة الصورة">✕</button>
+          </div>
+        `).join('');
+
+        previews.querySelectorAll('[data-remove-img]').forEach(btn => {
+          btn.onclick = () => {
+            const idx = Number(btn.dataset.removeImg);
+            editorImages.splice(idx, 1);
+            renderEditorImages();
+          };
+        });
+      }
+
+      function renderAdminOrders(container) {
+        const orders = adminData.orders || [];
+        container.innerHTML = `
+          <div class="admin-card">
+            <div class="admin-header-row">
+              <div>
+                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إدارة طلبات الدفع عند الاستلام (${orders.length})</h2>
+                <p style="font-size:13px; color:var(--text-muted);">متابعة وتأكيد طلبات الزبائن وتحديث حالات الشحن والتسليم.</p>
+              </div>
+            </div>
+
+            <div class="admin-notice-card" style="background:#EBF5FF; border-color:#B9DAFF; color:#0C4A6E;">
+              ℹ️ تنبيه إداري: الطلبات الجديدة تحتاج تأكيد التوفر هاتفياً. عدّل المخزون بعد تأكيد الطلب؛ لا يتم خصم المخزون آلياً.
+            </div>
+
+            <div class="admin-orders-list">
+              ${orders.length === 0 ? `
+                <div style="text-align:center; padding:40px; color:var(--text-muted);">
+                  <div style="font-size:32px; margin-bottom:10px;">📦</div>
+                  <h3 style="font-size:16px; font-weight:700; margin-bottom:6px;">لا توجد طلبات مسجلة حتى الآن</h3>
+                  <p style="font-size:13px;">عندما يقوم الزبائن بإرسال طلبات من المتجر، ستظهر جميع بياناتهم وتفاصيل الطلب هنا مباشرة.</p>
+                </div>
+              ` : orders.slice().reverse().map(o => `
+                <div class="admin-order-card">
+                  <div class="admin-order-head">
+                    <div>
+                      <strong style="font-size:16px; color:var(--text-ink);">${esc(o.name)}</strong>
+                      <span style="font-size:12px; color:var(--text-muted); margin-right:8px;">(طلب #${esc(o.id)})</span>
+                    </div>
+                    <div style="font-size:18px; font-weight:800; color:var(--accent-action);">
+                      ${money(o.total)}
+                    </div>
+                  </div>
+
+                  <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--text-muted);">
+                    <div>📞 <a href="tel:${esc(o.phone)}" style="color:var(--text-ink); font-weight:700;">${esc(o.phone)}</a></div>
+                    <div>📍 ${esc(o.address || 'العنوان غير محدد')}</div>
+                    <div>🕒 ${new Date(o.createdAt).toLocaleString('ar-DZ')}</div>
+                  </div>
+
+                  <div style="background:var(--bg-canvas); border-radius:var(--radius-sm); padding:12px;">
+                    <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">المنتجات المطلوبة:</div>
+                    <ul class="admin-order-items">
+                      ${(o.items || []).map(item => `
+                        <li>• <strong>${esc(item.name)}</strong> × ${item.quantity} (${money(item.price * item.quantity)})</li>
+                      `).join('')}
+                    </ul>
+                  </div>
+
+                  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:4px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700;">
+                      <span>حالة الطلب:</span>
+                      <select class="admin-select" data-admin-order="${esc(o.id)}" style="width:auto; padding:6px 12px; font-size:13px;">
+                        ${[
+                          ['pending', 'جديد (قيد المراجعة)'],
+                          ['confirmed', 'مؤكد'],
+                          ['shipped', 'تم الشحن'],
+                          ['delivered', 'تم التسليم بنجاح'],
+                          ['cancelled', 'ملغى']
+                        ].map(([v, t]) => `<option value="${v}" ${v === o.status ? 'selected' : ''}>${t}</option>`).join('')}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+
+        container.querySelectorAll('[data-admin-order]').forEach(select => {
+          select.onchange = async () => {
+            const orderId = select.dataset.adminOrder;
+            const newStatus = select.value;
+            try {
+              await api('/api/admin/order', { id: orderId, status: newStatus });
+              const found = adminData.orders.find(o => o.id === orderId);
+              if (found) found.status = newStatus;
+              toast('تم تحديث حالة الطلب بنجاح.');
+            } catch (err) {
+              if (session.demo) {
+                const found = adminData.orders.find(o => o.id === orderId);
+                if (found) found.status = newStatus;
+                toast('تم تحديث حالة الطلب في وضع المعاينة.');
+              } else {
+                toast(err.message);
+              }
+            }
+          };
+        });
+      }
+
+      function renderAdminSettings(container) {
+        const s = adminData.settings || catalog.settings || {};
+        container.innerHTML = `
+          <form id="admin-settings-form" class="admin-card">
+            <div class="admin-header-row">
+              <div>
+                <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">إعدادات ومحتوى المتجر</h2>
+                <p style="font-size:13px; color:var(--text-muted);">تعديل نصوص المتجر، العنوان، وسياسة التوصيل والعملة.</p>
+              </div>
+            </div>
+
+            <div class="admin-form-grid">
+              <label class="admin-label">
+                <span>اسم المتجر</span>
+                <input type="text" name="name" class="admin-input" required maxlength="120" value="${esc(s.name || 'Shop Online')}">
+              </label>
+
+              <label class="admin-label">
+                <span>العملة الرسمية</span>
+                <select name="currency" class="admin-select">
+                  ${['DZD', 'EUR', 'USD', 'MAD', 'TND'].map(c => `
+                    <option value="${c}" ${c === s.currency ? 'selected' : ''}>${c}</option>
+                  `).join('')}
+                </select>
+              </label>
+
+              <label class="admin-label full-width">
+                <span>عنوان الصفحة الرئيسية (Headline)</span>
+                <input type="text" name="headline" class="admin-input" required maxlength="250" value="${esc(s.headline || 'كل ما تحتاجه، في مكان واحد')}">
+              </label>
+
+              <label class="admin-label full-width">
+                <span>مقدمة المتجر (Introduction)</span>
+                <textarea name="introduction" class="admin-textarea" required maxlength="1000">${esc(s.introduction || '')}</textarea>
+              </label>
+
+              <label class="admin-label full-width">
+                <span>التعريف بالمتجر (About)</span>
+                <textarea name="about" class="admin-textarea" required maxlength="5000">${esc(s.about || '')}</textarea>
+              </label>
+
+              <label class="admin-label full-width">
+                <span>سياسة وشروط التوصيل (Delivery)</span>
+                <textarea name="delivery" class="admin-textarea" required maxlength="3000">${esc(s.delivery || '')}</textarea>
+              </label>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+              <button type="submit" class="btn-primary" id="admin-save-settings-btn" style="padding:12px 32px;">
+                <span>حفظ التعديلات في Google Sheets</span>
+              </button>
+            </div>
+          </form>
+        `;
+
+        $('#admin-settings-form').onsubmit = async e => {
+          e.preventDefault();
+          const saveBtn = $('#admin-save-settings-btn');
+          saveBtn.disabled = true;
+          try {
+            const formData = new FormData(e.target);
+            const payload = Object.fromEntries(formData);
+            try {
+              await api('/api/admin/settings', payload);
+              adminData.settings = { ...adminData.settings, ...payload };
+              catalog.settings = { ...catalog.settings, ...payload };
+              toast('تم حفظ إعدادات المتجر في Google Sheets بنجاح.');
+            } catch (err) {
+              if (session.demo) {
+                adminData.settings = { ...adminData.settings, ...payload };
+                catalog.settings = { ...catalog.settings, ...payload };
+                toast('تم حفظ الإعدادات في وضع المعاينة (DEMO).');
+              } else {
+                throw err;
+              }
+            }
+          } catch (err) {
+            toast(err.message);
+          } finally {
+            saveBtn.disabled = false;
+          }
+        };
+      }
+
+      $$('[data-admin-tab]').forEach(btn => {
+        btn.onclick = () => {
+          currentTab = btn.dataset.adminTab;
+          renderAdminTabs();
+        };
+      });
+
+      renderAdminTabs();
 
       $('#admin-logout-btn').onclick = async () => {
         await api('/api/logout', {});
