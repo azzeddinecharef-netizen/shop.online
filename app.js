@@ -250,6 +250,806 @@
     }
   }
 
+  // --- Live Streaming State & Realtime Communication ---
+  const DEFAULT_LIVE_STATE = {
+    isLive: false,
+    hostPeerId: 'shoponline-live-host',
+    title: 'عرض وتجربة منتجات حصرية مباشرة',
+    scheduledTime: new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16),
+    pinnedProductId: 'demo-1',
+    viewersCount: 4,
+    reactionsCount: 16,
+    messages: [
+      { id: 1, user: 'فريق المتجر', text: 'أهلاً بكم في البث المباشر لمتجر Shop Online! تفضلوا بطرح استفساراتكم.', time: '10:00', isAdmin: true },
+      { id: 2, user: 'سفيان (الجزائر)', text: 'السلام عليكم، هل الدفع متوفر عند الاستلام؟', time: '10:02', isAdmin: false },
+      { id: 3, user: 'فريق المتجر', text: 'وعليكم السلام يا سفيان، نعم نوفر الدفع عند الاستلام مع المعاينة قبل الدفع!', time: '10:03', isAdmin: true }
+    ]
+  };
+
+  let liveState = (() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('shop_live_state') || 'null');
+      return stored ? { ...DEFAULT_LIVE_STATE, ...stored } : { ...DEFAULT_LIVE_STATE };
+    } catch {
+      return { ...DEFAULT_LIVE_STATE };
+    }
+  })();
+
+  let liveCountdownInterval = null;
+  let liveBroadcastBus = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      liveBroadcastBus = new BroadcastChannel('shop_live_channel');
+      liveBroadcastBus.onmessage = e => {
+        if (!e.data) return;
+        if (e.data.type === 'SYNC_LIVE_STATE') {
+          liveState = e.data.state;
+          if ($('#hero-live-container')) {
+            renderHeroLiveCard();
+          }
+          if ($('#admin-live-chat-messages')) {
+            updateAdminLiveChat();
+          }
+        } else if (e.data.type === 'NEW_REACTION') {
+          triggerFloatingHeart();
+        } else if (e.data.type === 'NEW_CHAT_MSG') {
+          if (!liveState.messages.find(m => m.id === e.data.msg.id)) {
+            liveState.messages.push(e.data.msg);
+            saveLiveState(false);
+            if ($('#client-chat-messages')) appendClientChatMessage(e.data.msg);
+            if ($('#admin-live-chat-messages')) appendAdminChatMessage(e.data.msg);
+          }
+        }
+      };
+    }
+  } catch (e) {}
+
+  window.addEventListener('storage', e => {
+    if (e.key === 'shop_live_state' && e.newValue) {
+      try {
+        liveState = JSON.parse(e.newValue);
+        if ($('#hero-live-container')) renderHeroLiveCard();
+        if ($('#admin-live-chat-messages')) updateAdminLiveChat();
+      } catch (err) {}
+    }
+  });
+
+  function saveLiveState(broadcast = true) {
+    try {
+      localStorage.setItem('shop_live_state', JSON.stringify(liveState));
+      if (broadcast && liveBroadcastBus) {
+        liveBroadcastBus.postMessage({ type: 'SYNC_LIVE_STATE', state: liveState });
+      }
+    } catch (e) {}
+  }
+
+  function formatScheduleDate(dateStr) {
+    try {
+      if (!dateStr) return 'غداً 8:00 مساءً';
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'غداً 8:00 مساءً';
+      const options = { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+      return d.toLocaleDateString('ar-DZ', options);
+    } catch {
+      return 'غداً 8:00 مساءً';
+    }
+  }
+
+  function triggerFloatingHeart() {
+    const container = $('#floating-hearts-container');
+    if (!container) return;
+    const heart = document.createElement('span');
+    heart.className = 'floating-heart';
+    const hearts = ['❤️', '💖', '🔥', '👏', '😍', '✨'];
+    heart.textContent = hearts[Math.floor(Math.random() * hearts.length)];
+    heart.style.left = (Math.random() * 55) + 'px';
+    container.appendChild(heart);
+    setTimeout(() => {
+      if (heart.parentNode) heart.parentNode.removeChild(heart);
+    }, 2400);
+  }
+
+  function renderChatMessagesHtml(messages) {
+    if (!messages || !messages.length) {
+      return '<div style="color:rgba(255,255,255,0.4); text-align:center; padding:10px;">لا توجد رسائل بعد... كن أول من يكتب!</div>';
+    }
+    return messages.slice(-15).map(m => `
+      <div class="live-chat-msg">
+        <span class="chat-user-name ${m.isAdmin ? 'is-admin' : ''}">${esc(m.user)}:</span>
+        <span class="chat-text">${esc(m.text)}</span>
+      </div>
+    `).join('');
+  }
+
+  function getPinnedProductHtml(prodId) {
+    const p = catalog.products.find(item => item.id === prodId) || catalog.products[0];
+    if (!p) return '';
+    const img = imgSrc(p.images && p.images[0]);
+    return `
+      <div class="live-pinned-product">
+        <img src="${esc(img)}" alt="${esc(p.name)}" class="pinned-prod-img">
+        <div class="pinned-prod-info">
+          <span class="pinned-badge">⭐ معروض في البث</span>
+          <div class="pinned-prod-title">${esc(p.name)}</div>
+          <div class="pinned-prod-price">${money(p.price)}</div>
+        </div>
+        <button type="button" class="btn-pinned-buy" data-live-buy-id="${esc(p.id)}">
+          <span>اشتري الآن</span>
+        </button>
+      </div>
+    `;
+  }
+
+  function getHeroLiveCardHtml() {
+    if (!liveState.isLive) {
+      const isReminded = localStorage.getItem('shop_live_reminded') === 'true';
+      return `
+        <article class="hero-live-card is-offline" id="hero-live-card">
+          <div>
+            <div class="live-offline-badge-row">
+              <span class="live-badge-offline"><span class="dot"></span> بث مباشر قريباً</span>
+              <span class="live-schedule-time">📅 ${formatScheduleDate(liveState.scheduledTime)}</span>
+            </div>
+            <h2 class="live-offline-title">${esc(liveState.title || 'عرض وتجربة المنتجات مباشرة')}</h2>
+            <p class="live-offline-desc">بث حي بالصوت والصورة لاستعراض الخامات والمميزات الحقيقية، مع تخفيضات خاصة وإجابة مباشرة على كل أسئلتكم!</p>
+            
+            <div class="live-countdown-grid" id="live-countdown-grid">
+              <div class="countdown-box"><span class="countdown-num" id="cd-days">00</span><span class="countdown-label">أيام</span></div>
+              <div class="countdown-box"><span class="countdown-num" id="cd-hours">00</span><span class="countdown-label">ساعات</span></div>
+              <div class="countdown-box"><span class="countdown-num" id="cd-mins">00</span><span class="countdown-label">دقائق</span></div>
+              <div class="countdown-box"><span class="countdown-num" id="cd-secs">00</span><span class="countdown-label">ثواني</span></div>
+            </div>
+          </div>
+
+          <div class="live-offline-actions">
+            <button type="button" class="btn-remind-live ${isReminded ? 'is-active' : ''}" id="btn-remind-live">
+              <span>${isReminded ? '✓ تم تفعيل التذكير بالبث' : '🔔 تذكيري بموعد البث'}</span>
+            </button>
+            <a href="/?category=ساعات وإكسسوارات" class="hero-side-link" style="justify-content:center; color:var(--text-ink);">
+              <span>تصفح المنتجات في المتجر</span>
+              <span aria-hidden="true">←</span>
+            </a>
+          </div>
+        </article>
+      `;
+    }
+
+    return `
+      <article class="hero-live-card is-live" id="hero-live-card">
+        <div class="live-player-wrap">
+          <video id="client-live-video" class="live-video-element" autoplay playsinline muted></video>
+          
+          <div class="live-video-placeholder" id="client-video-placeholder">
+            <div class="spinner" style="border-top-color:#FF5A36; width:36px; height:36px;"></div>
+            <span style="font-size:13px; font-weight:700;">جاري الاتصال بالبث المباشر...</span>
+          </div>
+
+          <!-- Top Overlay -->
+          <div class="live-top-overlay">
+            <span class="live-badge-active"><span style="width:7px; height:7px; border-radius:50%; background:#FFF; display:inline-block;"></span> مباشر</span>
+            <div class="live-viewers-badge">
+              <span>👁️</span> <span id="client-viewers-count">${liveState.viewersCount || 1}</span> مشاهد
+            </div>
+            <div class="live-overlay-controls">
+              <button type="button" class="btn-icon-overlay" id="btn-client-mute" title="تشغيل / كتم الصوت">🔊</button>
+              <button type="button" class="btn-icon-overlay" id="btn-client-fullscreen" title="ملء الشاشة">⛶</button>
+            </div>
+          </div>
+
+          <!-- Floating Hearts -->
+          <div class="floating-hearts-container" id="floating-hearts-container"></div>
+
+          <!-- Pinned Product -->
+          <div id="live-pinned-product-container">
+            ${getPinnedProductHtml(liveState.pinnedProductId)}
+          </div>
+
+          <!-- Mini Live Chat -->
+          <div class="live-chat-panel">
+            <div class="live-chat-messages" id="client-chat-messages">
+              ${renderChatMessagesHtml(liveState.messages)}
+            </div>
+            <form id="client-chat-form" class="live-chat-input-bar">
+              <input type="text" id="client-chat-input" class="live-chat-input" placeholder="اكتب تعليقاً في البث..." maxlength="100" autocomplete="off">
+              <button type="submit" class="btn-chat-send" title="إرسال">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+              <button type="button" class="btn-live-reaction" id="btn-send-heart" title="إرسال تفاعل">❤️</button>
+            </form>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function appendClientChatMessage(msg) {
+    const list = $('#client-chat-messages');
+    if (!list) return;
+    const div = document.createElement('div');
+    div.className = 'live-chat-msg';
+    div.innerHTML = `
+      <span class="chat-user-name ${msg.isAdmin ? 'is-admin' : ''}">${esc(msg.user)}:</span>
+      <span class="chat-text">${esc(msg.text)}</span>
+    `;
+    list.appendChild(div);
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function appendAdminChatMessage(msg) {
+    const list = $('#admin-live-chat-messages');
+    if (!list) return;
+    const div = document.createElement('div');
+    div.className = `studio-chat-msg ${msg.isAdmin ? 'is-admin' : ''}`;
+    div.innerHTML = `
+      <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+        <strong style="color:${msg.isAdmin ? '#E65100' : '#00695C'};">${esc(msg.user)}</strong>
+        <small style="color:var(--text-muted);">${esc(msg.time || '')}</small>
+      </div>
+      <div>${esc(msg.text)}</div>
+    `;
+    list.appendChild(div);
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function updateAdminLiveChat() {
+    const list = $('#admin-live-chat-messages');
+    if (!list) return;
+    if (!liveState.messages.length) {
+      list.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding:20px;">لا توجد رسائل دردشة حتى الآن.</div>';
+      return;
+    }
+    list.innerHTML = liveState.messages.slice(-25).map(m => `
+      <div class="studio-chat-msg ${m.isAdmin ? 'is-admin' : ''}">
+        <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+          <strong style="color:${m.isAdmin ? '#E65100' : '#00695C'};">${esc(m.user)}</strong>
+          <small style="color:var(--text-muted);">${esc(m.time || '')}</small>
+        </div>
+        <div>${esc(m.text)}</div>
+      </div>
+    `).join('');
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function renderHeroLiveCard() {
+    const container = $('#hero-live-container');
+    if (!container) return;
+    container.innerHTML = getHeroLiveCardHtml();
+    initHeroLiveCard();
+  }
+
+  function initHeroLiveCard() {
+    if (!liveState.isLive) {
+      // Countdown Timer Logic
+      clearInterval(liveCountdownInterval);
+      const updateCountdown = () => {
+        const target = new Date(liveState.scheduledTime).getTime();
+        const now = Date.now();
+        const diff = target - now;
+
+        const cdDays = $('#cd-days');
+        const cdHours = $('#cd-hours');
+        const cdMins = $('#cd-mins');
+        const cdSecs = $('#cd-secs');
+
+        if (diff <= 0) {
+          if (cdDays) cdDays.textContent = '00';
+          if (cdHours) cdHours.textContent = '00';
+          if (cdMins) cdMins.textContent = '00';
+          if (cdSecs) cdSecs.textContent = '00';
+          return;
+        }
+
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+        const mins = Math.floor((diff / (1000 * 60)) % 60);
+        const secs = Math.floor((diff / 1000) % 60);
+
+        if (cdDays) cdDays.textContent = String(days).padStart(2, '0');
+        if (cdHours) cdHours.textContent = String(hours).padStart(2, '0');
+        if (cdMins) cdMins.textContent = String(mins).padStart(2, '0');
+        if (cdSecs) cdSecs.textContent = String(secs).padStart(2, '0');
+      };
+
+      updateCountdown();
+      liveCountdownInterval = setInterval(updateCountdown, 1000);
+
+      const remindBtn = $('#btn-remind-live');
+      if (remindBtn) {
+        remindBtn.onclick = () => {
+          const current = localStorage.getItem('shop_live_reminded') === 'true';
+          const next = !current;
+          localStorage.setItem('shop_live_reminded', String(next));
+          remindBtn.classList.toggle('is-active', next);
+          remindBtn.querySelector('span').textContent = next ? '✓ تم تفعيل التذكير بالبث' : '🔔 تذكيري بموعد البث';
+          toast(next ? 'تم تفعيل التذكير! سنقوم بإشعارك فور بدء البث.' : 'تم إلغاء التذكير.');
+          if (next && 'Notification' in window && Notification.permission !== 'granted') {
+            Notification.requestPermission();
+          }
+        };
+      }
+    } else {
+      // Active Live Stream Handlers
+      const video = $('#client-live-video');
+      const placeholder = $('#client-video-placeholder');
+
+      // Attach media stream: check local admin stream first (for same-browser testing)
+      if (adminLiveStream) {
+        if (video) {
+          video.srcObject = adminLiveStream;
+          video.play().catch(() => {});
+        }
+        if (placeholder) placeholder.style.display = 'none';
+      } else if (typeof Peer !== 'undefined' && liveState.hostPeerId) {
+        // Connect to remote broadcaster via PeerJS
+        try {
+          const viewerPeer = new Peer();
+          viewerPeer.on('open', () => {
+            // Initiate call with empty stream
+            const canvas = document.createElement('canvas');
+            canvas.width = 1; canvas.height = 1;
+            const emptyStream = canvas.captureStream(1);
+            const call = viewerPeer.call(liveState.hostPeerId, emptyStream);
+            if (call) {
+              call.on('stream', remoteStream => {
+                if (video) {
+                  video.srcObject = remoteStream;
+                  video.play().catch(() => {});
+                }
+                if (placeholder) placeholder.style.display = 'none';
+              });
+            }
+          });
+          viewerPeer.on('error', () => {
+            // Fallback placeholder
+            if (placeholder) {
+              placeholder.innerHTML = `
+                <div style="font-size:24px; margin-bottom:6px;">📡</div>
+                <span style="font-size:13px; font-weight:700;">البث المباشر نشط</span>
+                <span style="font-size:11px; color:#8C94A0;">جاري مزامنة الصوت والصورة...</span>
+              `;
+            }
+          });
+        } catch (e) {
+          console.warn('Viewer PeerJS error:', e);
+        }
+      }
+
+      // Audio Mute/Unmute Toggle
+      const muteBtn = $('#btn-client-mute');
+      if (muteBtn && video) {
+        muteBtn.onclick = () => {
+          video.muted = !video.muted;
+          muteBtn.textContent = video.muted ? '🔇' : '🔊';
+          toast(video.muted ? 'تم كتم صوت البث' : 'تم تشغيل صوت البث');
+        };
+      }
+
+      // Fullscreen Toggle
+      const fsBtn = $('#btn-client-fullscreen');
+      const playerCard = $('#hero-live-card');
+      if (fsBtn && playerCard) {
+        fsBtn.onclick = () => {
+          if (!document.fullscreenElement) {
+            playerCard.requestFullscreen().catch(() => {});
+          } else {
+            document.exitFullscreen().catch(() => {});
+          }
+        };
+      }
+
+      // Heart Reaction Button
+      const heartBtn = $('#btn-send-heart');
+      if (heartBtn) {
+        heartBtn.onclick = () => {
+          triggerFloatingHeart();
+          liveState.reactionsCount = (liveState.reactionsCount || 0) + 1;
+          saveLiveState(false);
+          if (liveBroadcastBus) {
+            liveBroadcastBus.postMessage({ type: 'NEW_REACTION' });
+          }
+        };
+      }
+
+      // Live Chat Send Form
+      const chatForm = $('#client-chat-form');
+      const chatInput = $('#client-chat-input');
+      if (chatForm && chatInput) {
+        chatForm.onsubmit = e => {
+          e.preventDefault();
+          const text = chatInput.value.trim();
+          if (!text) return;
+          const newMsg = {
+            id: Date.now() + Math.random(),
+            user: 'زائر ' + Math.floor(Math.random() * 899 + 100),
+            text: text,
+            time: new Date().toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' }),
+            isAdmin: false
+          };
+          liveState.messages.push(newMsg);
+          saveLiveState(false);
+          appendClientChatMessage(newMsg);
+          if (liveBroadcastBus) {
+            liveBroadcastBus.postMessage({ type: 'NEW_CHAT_MSG', msg: newMsg });
+          }
+          chatInput.value = '';
+        };
+      }
+
+      // Pinned Product Direct Buy Button
+      const pinnedBuyBtn = document.querySelector('[data-live-buy-id]');
+      if (pinnedBuyBtn) {
+        pinnedBuyBtn.onclick = () => {
+          const id = pinnedBuyBtn.dataset.liveBuyId;
+          addToCart(id, 1);
+          location.hash = '#/cart';
+        };
+      }
+    }
+  }
+
+  // --- Admin Live Broadcasting State & Methods ---
+  let adminLiveStream = null;
+  let adminLivePeer = null;
+  let adminMediaRecorder = null;
+  let adminRecordedChunks = [];
+  let adminRecordTimerInterval = null;
+  let adminRecordSeconds = 0;
+
+  async function startAdminCamera() {
+    try {
+      adminLiveStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: true
+      });
+      const video = $('#admin-cam-video');
+      const placeholder = $('#admin-cam-placeholder');
+      if (video) {
+        video.srcObject = adminLiveStream;
+        video.hidden = false;
+      }
+      if (placeholder) placeholder.hidden = true;
+      toast('تم تشغيل كاميرا الويب بنجاح.');
+      return adminLiveStream;
+    } catch (err) {
+      console.warn('Physical camera not available or permission denied, using simulated stream:', err);
+      return createSimulatedAdminStream();
+    }
+  }
+
+  function createSimulatedAdminStream() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 360;
+    const ctx = canvas.getContext('2d');
+    let frame = 0;
+    function animate() {
+      frame++;
+      ctx.fillStyle = '#0F131A';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const grad = ctx.createRadialGradient(320, 180, 30, 320, 180, 260);
+      grad.addColorStop(0, 'rgba(255, 90, 54, 0.45)');
+      grad.addColorStop(1, 'rgba(15, 19, 26, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 26px Cairo, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Shop Online 🔴 مباشر', 320, 160);
+
+      ctx.fillStyle = '#FF5A36';
+      ctx.font = '15px Cairo, sans-serif';
+      ctx.fillText('استوديو البث المباشر (وضع المعاينة والتحكم)', 320, 196);
+
+      const alpha = 0.4 + 0.6 * Math.sin(frame * 0.08);
+      ctx.fillStyle = `rgba(229, 57, 53, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(320, 235, 9, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (adminLiveStream) requestAnimationFrame(animate);
+    }
+    animate();
+
+    const stream = canvas.captureStream(30);
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const dst = audioCtx.createMediaStreamDestination();
+      osc.connect(dst);
+      osc.start();
+      if (dst.stream.getAudioTracks().length) {
+        stream.addTrack(dst.stream.getAudioTracks()[0]);
+      }
+    } catch (e) {}
+
+    adminLiveStream = stream;
+    const video = $('#admin-cam-video');
+    const placeholder = $('#admin-cam-placeholder');
+    if (video) {
+      video.srcObject = adminLiveStream;
+      video.hidden = false;
+    }
+    if (placeholder) placeholder.hidden = true;
+    toast('تم تفعيل كاميرا الاستوديو بنجاح.');
+    return adminLiveStream;
+  }
+
+  function adminStartBroadcasting() {
+    const doBroadcast = () => {
+      liveState.isLive = true;
+      liveState.viewersCount = Math.floor(Math.random() * 7) + 4;
+      saveLiveState();
+
+      if (typeof Peer !== 'undefined') {
+        try {
+          if (adminLivePeer) adminLivePeer.destroy();
+          const hostId = 'shoponline-live-' + Math.floor(Math.random() * 8999 + 1000);
+          adminLivePeer = new Peer(hostId);
+          adminLivePeer.on('open', id => {
+            liveState.hostPeerId = id;
+            saveLiveState();
+          });
+          adminLivePeer.on('call', call => {
+            if (adminLiveStream) call.answer(adminLiveStream);
+          });
+        } catch (err) {
+          console.warn('Peer host error:', err);
+        }
+      }
+      toast('🔴 أنت الآن على الهواء مباشرة! البث معروض في الصفحة الرئيسية.');
+    };
+
+    if (!adminLiveStream) {
+      startAdminCamera().then(doBroadcast);
+    } else {
+      doBroadcast();
+    }
+  }
+
+  function adminStopBroadcasting() {
+    liveState.isLive = false;
+    saveLiveState();
+    if (adminLivePeer) {
+      try { adminLivePeer.destroy(); } catch (e) {}
+      adminLivePeer = null;
+    }
+    toast('تم إنهاء البث المباشر بنجاح.');
+  }
+
+  function adminToggleRecording() {
+    if (adminMediaRecorder && adminMediaRecorder.state === 'recording') {
+      adminMediaRecorder.stop();
+      clearInterval(adminRecordTimerInterval);
+      const btn = $('#btn-studio-record');
+      if (btn) {
+        btn.classList.remove('is-recording');
+        btn.innerHTML = '<span>⏺️ تسجيل البث</span>';
+      }
+      toast('تم إيقاف التسجيل وحفظ ملف البث على جهازك.');
+    } else {
+      if (!adminLiveStream) {
+        toast('يرجى تشغيل الكاميرا أولاً للبدء بالتسجيل.');
+        return;
+      }
+      adminRecordedChunks = [];
+      try {
+        adminMediaRecorder = new MediaRecorder(adminLiveStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+      } catch (e) {
+        try {
+          adminMediaRecorder = new MediaRecorder(adminLiveStream);
+        } catch (err) {
+          toast('المتصفح لا يدعم تسجيل هذا الفيديو.');
+          return;
+        }
+      }
+      adminMediaRecorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) adminRecordedChunks.push(e.data);
+      };
+      adminMediaRecorder.onstop = () => {
+        const blob = new Blob(adminRecordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `shop-online-live-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+      };
+      adminMediaRecorder.start(1000);
+      adminRecordSeconds = 0;
+      const btn = $('#btn-studio-record');
+      if (btn) {
+        btn.classList.add('is-recording');
+        btn.innerHTML = '<span>⏹️ إيقاف وحفظ (00:00)</span>';
+      }
+      adminRecordTimerInterval = setInterval(() => {
+        adminRecordSeconds++;
+        const mins = String(Math.floor(adminRecordSeconds / 60)).padStart(2, '0');
+        const secs = String(adminRecordSeconds % 60).padStart(2, '0');
+        if (btn) btn.innerHTML = `<span>⏹️ إيقاف وحفظ (${mins}:${secs})</span>`;
+      }, 1000);
+      toast('بدأ تسجيل البث المباشر ⏺️');
+    }
+  }
+
+  // --- Central Shared Products Management (GitHub Pages & Multi-Admin) ---
+  async function loadSharedProducts() {
+    let prods = [];
+    const repo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+    const branch = localStorage.getItem('shop_gh_branch') || 'main';
+
+    // 1. Try local/relative products.json (fastest)
+    try {
+      const res = await fetch(`./products.json?_t=${Date.now()}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json) && json.length) prods = json;
+      }
+    } catch (e) {}
+
+    // 2. Fallback to raw.githubusercontent.com (ensures freshest data across all admins & users worldwide)
+    if (!prods.length) {
+      try {
+        const rawRes = await fetch(`https://raw.githubusercontent.com/${repo}/${branch}/products.json?_t=${Date.now()}`);
+        if (rawRes.ok) {
+          const json = await rawRes.json();
+          if (Array.isArray(json) && json.length) prods = json;
+        }
+      } catch (e) {}
+    }
+
+    // 3. Fallback to BASELINE_PRODUCTS
+    if (!prods.length) {
+      prods = [...BASELINE_PRODUCTS];
+    }
+
+    // 4. Merge any local products from localStorage
+    try {
+      const raw = localStorage.getItem('shop_admin_products');
+      if (raw) {
+        const localList = JSON.parse(raw);
+        if (Array.isArray(localList)) {
+          for (const lp of localList) {
+            const idx = prods.findIndex(p => p.id === lp.id || p.slug === lp.slug);
+            if (idx >= 0) prods[idx] = { ...prods[idx], ...lp };
+            else prods.unshift(lp);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 5. If Google Sheets Web App is set, also attempt to fetch from Google Sheets
+    const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+    if (sheetUrl && sheetUrl.startsWith('http')) {
+      try {
+        const sRes = await fetch(sheetUrl);
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          if (sData && Array.isArray(sData.products)) {
+            for (const sp of sData.products) {
+              const idx = prods.findIndex(p => p.id === sp.id || p.slug === sp.slug);
+              if (idx >= 0) prods[idx] = { ...prods[idx], ...sp };
+              else prods.unshift(sp);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    return prods;
+  }
+
+  async function saveAndSyncProducts(updatedProductsList) {
+    catalog.products = [...updatedProductsList];
+    if (adminData) adminData.products = [...updatedProductsList];
+
+    // 1. LocalStorage cache for instant availability
+    try {
+      localStorage.setItem('shop_admin_products', JSON.stringify(updatedProductsList));
+    } catch (e) {}
+
+    // 2. GitHub Direct Commit to products.json (so all admins in Algiers and customers see it)
+    const ghToken = localStorage.getItem('shop_gh_token');
+    const repo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+    const branch = localStorage.getItem('shop_gh_branch') || 'main';
+
+    let ghSuccess = false;
+    if (ghToken) {
+      try {
+        toast('جارٍ مزامنة ونشر المنتجات سحابياً على GitHub...');
+        
+        // A. Get current SHA of products.json if it exists
+        let sha = null;
+        try {
+          const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/products.json?ref=${branch}`, {
+            headers: {
+              'Authorization': `token ${ghToken}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          if (getRes.ok) {
+            const data = await getRes.json();
+            sha = data.sha;
+          }
+        } catch (e) {}
+
+        // B. UTF-8 to Base64
+        const contentStr = JSON.stringify(updatedProductsList, null, 2);
+        const b64 = btoa(unescape(encodeURIComponent(contentStr)));
+
+        // C. PUT /contents/products.json
+        const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/products.json`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${ghToken}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify({
+            message: `Update catalog products [${updatedProductsList.length} items]`,
+            content: b64,
+            branch: branch,
+            ...(sha ? { sha } : {})
+          })
+        });
+
+        if (putRes.ok) {
+          ghSuccess = true;
+          // Also sync public/products.json in same repo
+          try {
+            let pubSha = null;
+            const getPubRes = await fetch(`https://api.github.com/repos/${repo}/contents/public/products.json?ref=${branch}`, {
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+            });
+            if (getPubRes.ok) pubSha = (await getPubRes.json()).sha;
+            await fetch(`https://api.github.com/repos/${repo}/contents/public/products.json`, {
+              method: 'PUT',
+              headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
+              body: JSON.stringify({
+                message: `Update public catalog products [${updatedProductsList.length} items]`,
+                content: b64,
+                branch: branch,
+                ...(pubSha ? { sha: pubSha } : {})
+              })
+            });
+          } catch (e) {}
+          toast('✅ تم حفظ ونشر المنتجات على GitHub بنجاح! متاحة الآن فوراً لزميلك في الجزائر العاصمة ولكل الزوار.');
+        } else {
+          const errRes = await putRes.json().catch(() => ({}));
+          console.warn('GitHub put products error:', errRes);
+        }
+      } catch (err) {
+        console.warn('GitHub sync products exception:', err);
+      }
+    }
+
+    // 3. Google Sheets sync if configured
+    const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+    if (sheetUrl && sheetUrl.startsWith('http')) {
+      try {
+        fetch(sheetUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'saveProducts', products: updatedProductsList })
+        });
+      } catch (e) {}
+    }
+
+    if (!ghSuccess) {
+      if (ghToken) {
+        toast('تم الحفظ محلياً. يرجى التأكد من اتصال الإنترنت وصلاحيات GitHub Token.');
+      } else {
+        toast('تم الحفظ محلياً. لمشاركة المنتجات مع زميلك في العاصمة والزبائن، أضف رمز GitHub Token من تبويب "رفع الصور إلى GitHub".');
+      }
+    }
+  }
+
   // API Client
   async function api(path, data) {
     const isPost = data !== undefined;
@@ -329,20 +1129,10 @@
           </div>
         </article>
 
-        <!-- Secondary Side Card (Desktop) -->
-        <article class="hero-side-card">
-          <div>
-            <span class="hero-side-tag">اختيارات يومية</span>
-            <h2 class="hero-side-title">تفاصيل تحبّها</h2>
-          </div>
-          <div class="hero-side-image">
-            <img src="/images/watch.jpg" alt="ساعة ذكية" loading="lazy">
-          </div>
-          <a href="/?category=ساعات وإكسسوارات" class="hero-side-link">
-            <span>اكتشف الإكسسوارات</span>
-            <span aria-hidden="true">←</span>
-          </a>
-        </article>
+        <!-- Live Stream Side Card (Replaces تفاصيل تحبّها) -->
+        <div id="hero-live-container">
+          ${getHeroLiveCardHtml()}
+        </div>
       </section>
 
       <!-- Value Props Strip -->
@@ -468,6 +1258,7 @@
     renderFilterChips();
     renderProductsGrid();
     setupHomeEvents();
+    initHeroLiveCard();
   }
 
   function renderCategoriesGrid() {
@@ -1743,14 +2534,8 @@
       remoteData = await api('/api/demo/admin');
     } catch (e) {}
 
-    let allProducts = [...(remoteData?.products || BASELINE_PRODUCTS)];
-    if (localProds && localProds.length) {
-      for (const lp of localProds) {
-        const idx = allProducts.findIndex(p => p.id === lp.id || p.slug === lp.slug);
-        if (idx >= 0) allProducts[idx] = { ...allProducts[idx], ...lp };
-        else allProducts.unshift(lp);
-      }
-    }
+    // Load from central shared products.json (accessible to all admins & users)
+    let allProducts = await loadSharedProducts();
 
     let savedSettings = null;
     try {
@@ -1802,6 +2587,7 @@
           <button type="button" class="chip-btn" data-admin-tab="sheets">📊 ربط Google Sheets</button>
           <button type="button" class="chip-btn" data-admin-tab="github">🐙 رفع الصور إلى GitHub</button>
           <button type="button" class="chip-btn" data-admin-tab="settings">⚙️ إعدادات المتجر</button>
+          <button type="button" class="chip-btn" data-admin-tab="live" style="color:#D32F2F; font-weight:700;">🔴 البث المباشر (Live)</button>
         </div>
 
         <div id="admin-tab-content"></div>
@@ -1825,12 +2611,31 @@
       else if (currentTab === 'sheets') renderAdminSheets(tabContent);
       else if (currentTab === 'github') renderAdminGitHub(tabContent);
       else if (currentTab === 'settings') renderAdminSettings(tabContent);
+      else if (currentTab === 'live') renderAdminLive(tabContent);
     }
 
     // --- TAB 1: Products Management ---
     function renderAdminProducts(container) {
+      const hasGh = !!localStorage.getItem('shop_gh_token');
       container.innerHTML = `
         <div class="admin-card">
+          <!-- Cloud Sync Status Bar -->
+          <div style="background:${hasGh ? '#E8F5E9' : '#FFF3E0'}; border:1px solid ${hasGh ? '#A5D6A7' : '#FFE0B2'}; border-radius:var(--radius-sm); padding:12px 18px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <strong style="color:${hasGh ? '#2E7D32' : '#E65100'}; font-size:14px; display:flex; align-items:center; gap:6px;">
+                <span>${hasGh ? '🟢 المزامنة السحابية العامة نشطة (GitHub Cloud Sync)' : '⚠️ المزامنة السحابية غير مربوطة'}</span>
+              </strong>
+              <p style="font-size:12px; margin-top:3px; color:var(--text-ink); line-height:1.5;">
+                ${hasGh 
+                  ? 'أي منتج تضيفه أو تعدله يُحفظ مباشرة في مستودع GitHub ليظهر فوراً لزميلك في الجزائر العاصمة ولكافة الزوار على الموقع.' 
+                  : 'المنتجات تُحفظ الآن في هذا المتصفح فقط. لكي تظهر فوراً لزميلك في الجزائر العاصمة ولكل المشترين، ادخل رمز GitHub Token في تبويب "رفع الصور إلى GitHub".'}
+              </p>
+            </div>
+            <button type="button" class="btn-primary" id="btn-manual-sync-github" style="padding:8px 16px; font-size:12px; background:${hasGh ? '#2E7D32' : '#E65100'};">
+              <span>🔄 مزامنة وتحديث المنتجات سحابياً</span>
+            </button>
+          </div>
+
           <div class="admin-header-row">
             <div>
               <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">قائمة المنتجات (${adminData.products.length})</h2>
@@ -1872,8 +2677,9 @@
                       <td>${p.stock}</td>
                       <td><span class="admin-badge ${esc(p.status || 'active')}">${p.status === 'active' ? 'منشور' : (p.status === 'draft' ? 'مسودة' : 'مؤرشف')}</span></td>
                       <td>
-                        <div style="display:flex; gap:8px; align-items:center;">
+                        <div style="display:flex; gap:6px; align-items:center;">
                           <button type="button" class="btn-secondary" data-admin-edit="${esc(p.id)}" style="padding:6px 12px; font-size:12px;">تعديل</button>
+                          <button type="button" class="btn-secondary" data-admin-delete="${esc(p.id)}" style="padding:6px 10px; font-size:12px; color:#D32F2F; border-color:rgba(211,47,47,0.3);">حذف 🗑️</button>
                           <a href="#/product/${encodeURIComponent(p.slug)}" style="font-size:12px; color:var(--accent-action); font-weight:700;">معاينة ↗</a>
                         </div>
                       </td>
@@ -1892,12 +2698,35 @@
         openProductEditor();
       };
 
+      $('#btn-manual-sync-github').onclick = async () => {
+        toast('جارٍ جلب وتحديث المنتجات سحابياً...');
+        const updated = await loadSharedProducts();
+        adminData.products = updated;
+        await saveAndSyncProducts(adminData.products);
+        renderAdminProducts(container);
+        toast('✅ تمت مزامنة جميع المنتجات سحابياً بنجاح!');
+      };
+
       container.querySelectorAll('[data-admin-edit]').forEach(btn => {
         btn.onclick = () => {
           const id = btn.dataset.adminEdit;
           editingProduct = adminData.products.find(p => p.id === id);
           editorImages = editingProduct ? [...(editingProduct.images || [])] : [];
           openProductEditor();
+        };
+      });
+
+      container.querySelectorAll('[data-admin-delete]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.adminDelete;
+          const targetProd = adminData.products.find(p => p.id === id);
+          if (!targetProd) return;
+          if (confirm(`هل أنت متأكد من حذف المنتج "${targetProd.name}"؟`)) {
+            adminData.products = adminData.products.filter(p => p.id !== id);
+            await saveAndSyncProducts(adminData.products);
+            renderAdminProducts(container);
+            toast(`تم حذف "${targetProd.name}" وتحديث المتجر.`);
+          }
         };
       });
     }
@@ -2102,28 +2931,8 @@
             catalog.categories.push(savedProduct.category);
           }
 
-          // 3. Persist locally to localStorage
-          try {
-            localStorage.setItem('shop_admin_products', JSON.stringify(adminData.products));
-          } catch (e) {}
-
-          // 4. Send to Google Sheets if configured
-          const sheetUrl = localStorage.getItem('shop_google_sheet_url');
-          if (sheetUrl && sheetUrl.startsWith('http')) {
-            try {
-              fetch(sheetUrl, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'saveProduct', product: savedProduct })
-              });
-              toast('تم حفظ المنتج وتسجيله في Google Sheets بنجاح! 📊');
-            } catch (sheetErr) {
-              console.warn('Google Sheets sync error:', sheetErr);
-            }
-          } else {
-            toast('تم حفظ المنتج بنجاح وتحديث المتجر.');
-          }
+          // 3. Persist and sync across all admins and live website (GitHub Cloud Sync + Google Sheets + LocalStorage)
+          await saveAndSyncProducts(adminData.products);
 
           wrap.innerHTML = '';
           renderAdminProducts($('#admin-tab-content'));
@@ -2517,6 +3326,216 @@ function doPost(e) {
       };
     }
 
+    // --- TAB 6: Live Streaming Studio ---
+    function renderAdminLive(container) {
+      container.innerHTML = `
+        <div class="admin-card">
+          <div class="admin-header-row">
+            <div>
+              <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px; display:flex; align-items:center; gap:8px;">
+                <span>استوديو البث المباشر</span>
+                <span class="${liveState.isLive ? 'live-badge-active' : 'live-badge-offline'}" id="admin-studio-live-badge">
+                  ${liveState.isLive ? '🔴 على الهواء الآن' : 'غير متصل (جاهز للبث)'}
+                </span>
+              </h2>
+              <p style="font-size:13px; color:var(--text-muted);">بث حي بالكاميرا والصوت مباشرة للمشاهدين مع عرض المنتجات واستقبال الدردشة.</p>
+            </div>
+          </div>
+
+          <div class="admin-live-studio-grid">
+            <!-- Left Column: Video Viewport & Controls -->
+            <div class="studio-video-card">
+              <div class="studio-cam-viewport">
+                <video id="admin-cam-video" autoplay playsinline muted ${adminLiveStream ? '' : 'hidden'}></video>
+                <div class="studio-placeholder-text" id="admin-cam-placeholder" ${adminLiveStream ? 'hidden' : ''}>
+                  <div style="font-size:42px; margin-bottom:12px;">📷</div>
+                  <h3 style="font-size:16px; font-weight:700; color:#FFF; margin-bottom:6px;">كاميرا الويب غير مشغلة</h3>
+                  <p style="font-size:13px; color:#8C94A0;">اضغط على "تشغيل الكاميرا" لمعاينة صورتك والبدء بالبث.</p>
+                </div>
+              </div>
+
+              <div class="studio-toolbar">
+                <div class="studio-media-controls">
+                  <button type="button" class="btn-studio-toggle" id="btn-toggle-cam">
+                    <span>${adminLiveStream ? 'إيقاف الكاميرا 📹' : 'تشغيل الكاميرا 📹'}</span>
+                  </button>
+                  <button type="button" class="btn-studio-toggle" id="btn-toggle-mic">
+                    <span>كتم المايك 🎙️</span>
+                  </button>
+                  <button type="button" class="btn-studio-record ${adminMediaRecorder && adminMediaRecorder.state === 'recording' ? 'is-recording' : ''}" id="btn-studio-record">
+                    <span>${adminMediaRecorder && adminMediaRecorder.state === 'recording' ? `⏹️ إيقاف وحفظ (${String(Math.floor(adminRecordSeconds/60)).padStart(2,'0')}:${String(adminRecordSeconds%60).padStart(2,'0')})` : '⏺️ تسجيل البث'}</span>
+                  </button>
+                </div>
+
+                <div>
+                  <button type="button" class="btn-go-live ${liveState.isLive ? 'is-broadcasting' : ''}" id="btn-admin-go-live">
+                    <span>${liveState.isLive ? '⏹️ إنهاء البث المباشر' : '🔴 بدء البث المباشر الآن'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Column: Product Showcase, Schedule & Live Chat -->
+            <div class="studio-sidebar">
+              <!-- Panel 1: Product Showcase / Pin -->
+              <div class="studio-panel">
+                <div class="studio-panel-title">
+                  <span>⭐ تثبيت منتج معروض في البث</span>
+                </div>
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+                  اختر المنتج الذي تتحدث عنه ليظهر للمشاهدين فوراً في أسفل شاشة البث مع زر الشراء.
+                </p>
+                <div style="display:flex; gap:8px;">
+                  <select id="admin-pin-product-select" class="admin-select" style="flex:1;">
+                    ${adminData.products.map(p => `
+                      <option value="${esc(p.id)}" ${p.id === liveState.pinnedProductId ? 'selected' : ''}>
+                        ${esc(p.name)} (${money(p.price)})
+                      </option>
+                    `).join('')}
+                  </select>
+                  <button type="button" class="btn-primary" id="btn-save-pinned-product" style="padding:0 16px; font-size:13px;">
+                    <span>تثبيت</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Panel 2: Schedule Next Stream & Title -->
+              <div class="studio-panel">
+                <div class="studio-panel-title">
+                  <span>📅 عنوان وجدولة البث القادم</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <label class="admin-label">
+                    <span>عنوان البث المباشر</span>
+                    <input type="text" id="admin-schedule-title" class="admin-input" value="${esc(liveState.title || '')}" placeholder="مثال: تجربة وعروض خاصة على المنتجات">
+                  </label>
+                  <label class="admin-label">
+                    <span>موعد البث (لتشغيل العداد التنازلي)</span>
+                    <input type="datetime-local" id="admin-schedule-time" class="admin-input" value="${esc(liveState.scheduledTime || '')}">
+                  </label>
+                  <button type="button" class="btn-outline" id="btn-save-schedule" style="align-self:flex-start; padding:8px 18px; font-size:13px;">
+                    <span>حفظ وتحديث العداد</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Panel 3: Live Chat Monitor -->
+              <div class="studio-panel">
+                <div class="studio-panel-title">
+                  <span>💬 محادثات المشاهدين الحية</span>
+                  <small style="color:var(--text-muted); font-size:11px;">مزامنة فورية</small>
+                </div>
+                <div class="studio-chat-container" id="admin-live-chat-messages">
+                  <!-- Rendered via updateAdminLiveChat() -->
+                </div>
+                <form id="admin-studio-chat-form" class="studio-chat-send-box">
+                  <input type="text" id="admin-studio-chat-input" class="admin-input" placeholder="رد على المشاهدين كمدير المتجر..." style="padding:8px 12px; font-size:12px;">
+                  <button type="submit" class="btn-primary" style="padding:0 14px; font-size:12px;">إرسال</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (adminLiveStream) {
+        const v = $('#admin-cam-video');
+        if (v) v.srcObject = adminLiveStream;
+      }
+
+      updateAdminLiveChat();
+
+      // Camera Toggle
+      $('#btn-toggle-cam').onclick = async () => {
+        if (adminLiveStream) {
+          adminLiveStream.getTracks().forEach(t => t.stop());
+          adminLiveStream = null;
+          const v = $('#admin-cam-video');
+          const ph = $('#admin-cam-placeholder');
+          if (v) { v.srcObject = null; v.hidden = true; }
+          if (ph) ph.hidden = false;
+          $('#btn-toggle-cam').querySelector('span').textContent = 'تشغيل الكاميرا 📹';
+          toast('تم إيقاف الكاميرا.');
+        } else {
+          await startAdminCamera();
+          $('#btn-toggle-cam').querySelector('span').textContent = 'إيقاف الكاميرا 📹';
+        }
+      };
+
+      // Mic Toggle
+      let isMicMuted = false;
+      $('#btn-toggle-mic').onclick = () => {
+        if (!adminLiveStream) {
+          toast('يرجى تشغيل الكاميرا أولاً.');
+          return;
+        }
+        isMicMuted = !isMicMuted;
+        adminLiveStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+        const btn = $('#btn-toggle-mic');
+        btn.classList.toggle('is-muted', isMicMuted);
+        btn.querySelector('span').textContent = isMicMuted ? 'إلغاء كتم المايك 🎙️' : 'كتم المايك 🎙️';
+        toast(isMicMuted ? 'تم كتم المايكروفون' : 'تم تفعيل المايكروفون');
+      };
+
+      // Record Stream Button
+      $('#btn-studio-record').onclick = () => {
+        adminToggleRecording();
+      };
+
+      // Go Live / End Stream Button
+      $('#btn-admin-go-live').onclick = () => {
+        if (liveState.isLive) {
+          adminStopBroadcasting();
+          renderAdminLive(container);
+        } else {
+          adminStartBroadcasting();
+          renderAdminLive(container);
+        }
+      };
+
+      // Pinned Product Save
+      $('#btn-save-pinned-product').onclick = () => {
+        const sel = $('#admin-pin-product-select');
+        if (!sel) return;
+        liveState.pinnedProductId = sel.value;
+        saveLiveState();
+        toast('تم تثبيت المنتج بنجاح في شاشة البث المباشر.');
+      };
+
+      // Schedule Save
+      $('#btn-save-schedule').onclick = () => {
+        const titleInput = $('#admin-schedule-title');
+        const timeInput = $('#admin-schedule-time');
+        if (titleInput && titleInput.value.trim()) liveState.title = titleInput.value.trim();
+        if (timeInput && timeInput.value) liveState.scheduledTime = timeInput.value;
+        saveLiveState();
+        toast('تم حفظ موعد البث وتحديث العداد التنازلي في الصفحة الرئيسية.');
+      };
+
+      // Admin Chat Reply Form
+      $('#admin-studio-chat-form').onsubmit = e => {
+        e.preventDefault();
+        const inp = $('#admin-studio-chat-input');
+        if (!inp) return;
+        const text = inp.value.trim();
+        if (!text) return;
+        const newMsg = {
+          id: Date.now() + Math.random(),
+          user: 'المدير 🌟',
+          text: text,
+          time: new Date().toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' }),
+          isAdmin: true
+        };
+        liveState.messages.push(newMsg);
+        saveLiveState(false);
+        appendAdminChatMessage(newMsg);
+        if (liveBroadcastBus) {
+          liveBroadcastBus.postMessage({ type: 'NEW_CHAT_MSG', msg: newMsg });
+        }
+        inp.value = '';
+      };
+    }
+
     $$('[data-admin-tab]').forEach(btn => {
       btn.onclick = () => {
         currentTab = btn.dataset.adminTab;
@@ -2709,14 +3728,8 @@ function doPost(e) {
     });
 
     // Populate dropdown items
-    menu.innerHTML = [
-      'الكل',
-      'إلكترونيات',
-      'أزياء وإكسسوارات',
-      'المنزل',
-      'أحذية',
-      'ساعات وإكسسوارات'
-    ].map(cat => `
+    const allCats = ['الكل', ...Array.from(new Set(catalog.categories || [])).filter(c => c && c !== 'الكل')];
+    menu.innerHTML = allCats.map(cat => `
       <a href="/?category=${encodeURIComponent(cat)}" class="cats-dropdown-item" data-dropdown-cat="${esc(cat)}">
         <span>${esc(cat)}</span>
       </a>
@@ -2737,7 +3750,6 @@ function doPost(e) {
   (async function init() {
     updateBadges();
     setupSearchInputs();
-    setupCategoriesDropdown();
 
     // Global Modal backdrop & ESC close handler
     const backdrop = $('#modal-backdrop');
@@ -2753,23 +3765,45 @@ function doPost(e) {
     }
 
     try {
-      const data = await api('/api/catalog');
-      if (data && data.products) {
+      let remoteProducts = null;
+      try {
+        const data = await api('/api/catalog');
+        if (data && data.products) {
+          remoteProducts = data.products;
+          if (data.categories && data.categories.length) {
+            catalog.categories = Array.from(new Set([...catalog.categories, ...data.categories]));
+          }
+          if (data.settings) {
+            catalog.settings = { ...catalog.settings, ...data.settings };
+          }
+          catalog.demo = data.demo ?? false;
+        }
+      } catch (backendErr) {
+        // Backend /api/catalog not available (e.g., GitHub Pages static hosting)
+      }
+
+      // If backend not present or returned nothing, load from shared products.json (GitHub / raw / localStorage)
+      if (!remoteProducts || !remoteProducts.length) {
+        remoteProducts = await loadSharedProducts();
+        catalog.demo = false;
+      }
+
+      if (remoteProducts && remoteProducts.length) {
         // 1. Enrich baseline products with remote data, preserving any updated images
         const enriched = BASELINE_PRODUCTS.map(base => {
-          const remote = data.products.find(p => p.id === base.id || p.slug === base.slug);
+          const remote = remoteProducts.find(p => p.id === base.id || p.slug === base.slug);
           const imgs = (remote && remote.images && remote.images.length) ? remote.images : base.images;
           return remote ? { ...base, ...remote, images: imgs } : base;
         });
 
-        // 2. Append any products from server that aren't in baseline
-        for (const p of data.products) {
+        // 2. Append any products from remote that aren't in baseline
+        for (const p of remoteProducts) {
           if (!enriched.some(e => e.id === p.id || e.slug === p.slug)) {
             enriched.push(p);
           }
         }
 
-        // 3. Merge locally saved admin products (from localStorage)
+        // 3. Merge locally saved admin products (from localStorage fallback)
         try {
           const raw = localStorage.getItem('shop_admin_products');
           if (raw) {
@@ -2786,17 +3820,19 @@ function doPost(e) {
         } catch (e) {}
 
         catalog.products = enriched;
-        if (data.categories && data.categories.length) {
-          catalog.categories = Array.from(new Set([...catalog.categories, ...data.categories]));
+
+        // Auto-discover any new categories
+        const catSet = new Set(catalog.categories);
+        for (const p of enriched) {
+          if (p.category) catSet.add(p.category);
         }
-        if (data.settings) {
-          catalog.settings = { ...catalog.settings, ...data.settings };
-        }
-        catalog.demo = data.demo ?? true;
+        catalog.categories = Array.from(catSet);
       }
     } catch (e) {
-      console.warn('Backend catalog sync notice:', e.message);
+      console.warn('Catalog init notice:', e.message);
     }
+
+    setupCategoriesDropdown();
 
     // Show Demo Banner if in demo mode
     const notice = $('#notice');

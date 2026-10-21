@@ -877,6 +877,179 @@
     }
   }
 
+  // --- Central Shared Products Management (GitHub Pages & Multi-Admin) ---
+  async function loadSharedProducts() {
+    let prods = [];
+    const repo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+    const branch = localStorage.getItem('shop_gh_branch') || 'main';
+
+    // 1. Try local/relative products.json (fastest)
+    try {
+      const res = await fetch(`./products.json?_t=${Date.now()}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json) && json.length) prods = json;
+      }
+    } catch (e) {}
+
+    // 2. Fallback to raw.githubusercontent.com (ensures freshest data across all admins & users worldwide)
+    if (!prods.length) {
+      try {
+        const rawRes = await fetch(`https://raw.githubusercontent.com/${repo}/${branch}/products.json?_t=${Date.now()}`);
+        if (rawRes.ok) {
+          const json = await rawRes.json();
+          if (Array.isArray(json) && json.length) prods = json;
+        }
+      } catch (e) {}
+    }
+
+    // 3. Fallback to BASELINE_PRODUCTS
+    if (!prods.length) {
+      prods = [...BASELINE_PRODUCTS];
+    }
+
+    // 4. Merge any local products from localStorage
+    try {
+      const raw = localStorage.getItem('shop_admin_products');
+      if (raw) {
+        const localList = JSON.parse(raw);
+        if (Array.isArray(localList)) {
+          for (const lp of localList) {
+            const idx = prods.findIndex(p => p.id === lp.id || p.slug === lp.slug);
+            if (idx >= 0) prods[idx] = { ...prods[idx], ...lp };
+            else prods.unshift(lp);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 5. If Google Sheets Web App is set, also attempt to fetch from Google Sheets
+    const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+    if (sheetUrl && sheetUrl.startsWith('http')) {
+      try {
+        const sRes = await fetch(sheetUrl);
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          if (sData && Array.isArray(sData.products)) {
+            for (const sp of sData.products) {
+              const idx = prods.findIndex(p => p.id === sp.id || p.slug === sp.slug);
+              if (idx >= 0) prods[idx] = { ...prods[idx], ...sp };
+              else prods.unshift(sp);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    return prods;
+  }
+
+  async function saveAndSyncProducts(updatedProductsList) {
+    catalog.products = [...updatedProductsList];
+    if (adminData) adminData.products = [...updatedProductsList];
+
+    // 1. LocalStorage cache for instant availability
+    try {
+      localStorage.setItem('shop_admin_products', JSON.stringify(updatedProductsList));
+    } catch (e) {}
+
+    // 2. GitHub Direct Commit to products.json (so all admins in Algiers and customers see it)
+    const ghToken = localStorage.getItem('shop_gh_token');
+    const repo = localStorage.getItem('shop_gh_repo') || 'azzeddinecharef-netizen/shop.online';
+    const branch = localStorage.getItem('shop_gh_branch') || 'main';
+
+    let ghSuccess = false;
+    if (ghToken) {
+      try {
+        toast('جارٍ مزامنة ونشر المنتجات سحابياً على GitHub...');
+        
+        // A. Get current SHA of products.json if it exists
+        let sha = null;
+        try {
+          const getRes = await fetch(`https://api.github.com/repos/${repo}/contents/products.json?ref=${branch}`, {
+            headers: {
+              'Authorization': `token ${ghToken}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          if (getRes.ok) {
+            const data = await getRes.json();
+            sha = data.sha;
+          }
+        } catch (e) {}
+
+        // B. UTF-8 to Base64
+        const contentStr = JSON.stringify(updatedProductsList, null, 2);
+        const b64 = btoa(unescape(encodeURIComponent(contentStr)));
+
+        // C. PUT /contents/products.json
+        const putRes = await fetch(`https://api.github.com/repos/${repo}/contents/products.json`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${ghToken}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify({
+            message: `Update catalog products [${updatedProductsList.length} items]`,
+            content: b64,
+            branch: branch,
+            ...(sha ? { sha } : {})
+          })
+        });
+
+        if (putRes.ok) {
+          ghSuccess = true;
+          // Also sync public/products.json in same repo
+          try {
+            let pubSha = null;
+            const getPubRes = await fetch(`https://api.github.com/repos/${repo}/contents/public/products.json?ref=${branch}`, {
+              headers: { 'Authorization': `token ${ghToken}`, 'Accept': 'application/vnd.github.v3+json' }
+            });
+            if (getPubRes.ok) pubSha = (await getPubRes.json()).sha;
+            await fetch(`https://api.github.com/repos/${repo}/contents/public/products.json`, {
+              method: 'PUT',
+              headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
+              body: JSON.stringify({
+                message: `Update public catalog products [${updatedProductsList.length} items]`,
+                content: b64,
+                branch: branch,
+                ...(pubSha ? { sha: pubSha } : {})
+              })
+            });
+          } catch (e) {}
+          toast('✅ تم حفظ ونشر المنتجات على GitHub بنجاح! متاحة الآن فوراً لزميلك في الجزائر العاصمة ولكل الزوار.');
+        } else {
+          const errRes = await putRes.json().catch(() => ({}));
+          console.warn('GitHub put products error:', errRes);
+        }
+      } catch (err) {
+        console.warn('GitHub sync products exception:', err);
+      }
+    }
+
+    // 3. Google Sheets sync if configured
+    const sheetUrl = localStorage.getItem('shop_google_sheet_url');
+    if (sheetUrl && sheetUrl.startsWith('http')) {
+      try {
+        fetch(sheetUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'saveProducts', products: updatedProductsList })
+        });
+      } catch (e) {}
+    }
+
+    if (!ghSuccess) {
+      if (ghToken) {
+        toast('تم الحفظ محلياً. يرجى التأكد من اتصال الإنترنت وصلاحيات GitHub Token.');
+      } else {
+        toast('تم الحفظ محلياً. لمشاركة المنتجات مع زميلك في العاصمة والزبائن، أضف رمز GitHub Token من تبويب "رفع الصور إلى GitHub".');
+      }
+    }
+  }
+
   // API Client
   async function api(path, data) {
     const isPost = data !== undefined;
@@ -2361,14 +2534,8 @@
       remoteData = await api('/api/demo/admin');
     } catch (e) {}
 
-    let allProducts = [...(remoteData?.products || BASELINE_PRODUCTS)];
-    if (localProds && localProds.length) {
-      for (const lp of localProds) {
-        const idx = allProducts.findIndex(p => p.id === lp.id || p.slug === lp.slug);
-        if (idx >= 0) allProducts[idx] = { ...allProducts[idx], ...lp };
-        else allProducts.unshift(lp);
-      }
-    }
+    // Load from central shared products.json (accessible to all admins & users)
+    let allProducts = await loadSharedProducts();
 
     let savedSettings = null;
     try {
@@ -2449,8 +2616,26 @@
 
     // --- TAB 1: Products Management ---
     function renderAdminProducts(container) {
+      const hasGh = !!localStorage.getItem('shop_gh_token');
       container.innerHTML = `
         <div class="admin-card">
+          <!-- Cloud Sync Status Bar -->
+          <div style="background:${hasGh ? '#E8F5E9' : '#FFF3E0'}; border:1px solid ${hasGh ? '#A5D6A7' : '#FFE0B2'}; border-radius:var(--radius-sm); padding:12px 18px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+              <strong style="color:${hasGh ? '#2E7D32' : '#E65100'}; font-size:14px; display:flex; align-items:center; gap:6px;">
+                <span>${hasGh ? '🟢 المزامنة السحابية العامة نشطة (GitHub Cloud Sync)' : '⚠️ المزامنة السحابية غير مربوطة'}</span>
+              </strong>
+              <p style="font-size:12px; margin-top:3px; color:var(--text-ink); line-height:1.5;">
+                ${hasGh 
+                  ? 'أي منتج تضيفه أو تعدله يُحفظ مباشرة في مستودع GitHub ليظهر فوراً لزميلك في الجزائر العاصمة ولكافة الزوار على الموقع.' 
+                  : 'المنتجات تُحفظ الآن في هذا المتصفح فقط. لكي تظهر فوراً لزميلك في الجزائر العاصمة ولكل المشترين، ادخل رمز GitHub Token في تبويب "رفع الصور إلى GitHub".'}
+              </p>
+            </div>
+            <button type="button" class="btn-primary" id="btn-manual-sync-github" style="padding:8px 16px; font-size:12px; background:${hasGh ? '#2E7D32' : '#E65100'};">
+              <span>🔄 مزامنة وتحديث المنتجات سحابياً</span>
+            </button>
+          </div>
+
           <div class="admin-header-row">
             <div>
               <h2 style="font-size:18px; font-weight:800; color:var(--text-ink); margin-bottom:4px;">قائمة المنتجات (${adminData.products.length})</h2>
@@ -2492,8 +2677,9 @@
                       <td>${p.stock}</td>
                       <td><span class="admin-badge ${esc(p.status || 'active')}">${p.status === 'active' ? 'منشور' : (p.status === 'draft' ? 'مسودة' : 'مؤرشف')}</span></td>
                       <td>
-                        <div style="display:flex; gap:8px; align-items:center;">
+                        <div style="display:flex; gap:6px; align-items:center;">
                           <button type="button" class="btn-secondary" data-admin-edit="${esc(p.id)}" style="padding:6px 12px; font-size:12px;">تعديل</button>
+                          <button type="button" class="btn-secondary" data-admin-delete="${esc(p.id)}" style="padding:6px 10px; font-size:12px; color:#D32F2F; border-color:rgba(211,47,47,0.3);">حذف 🗑️</button>
                           <a href="#/product/${encodeURIComponent(p.slug)}" style="font-size:12px; color:var(--accent-action); font-weight:700;">معاينة ↗</a>
                         </div>
                       </td>
@@ -2512,12 +2698,35 @@
         openProductEditor();
       };
 
+      $('#btn-manual-sync-github').onclick = async () => {
+        toast('جارٍ جلب وتحديث المنتجات سحابياً...');
+        const updated = await loadSharedProducts();
+        adminData.products = updated;
+        await saveAndSyncProducts(adminData.products);
+        renderAdminProducts(container);
+        toast('✅ تمت مزامنة جميع المنتجات سحابياً بنجاح!');
+      };
+
       container.querySelectorAll('[data-admin-edit]').forEach(btn => {
         btn.onclick = () => {
           const id = btn.dataset.adminEdit;
           editingProduct = adminData.products.find(p => p.id === id);
           editorImages = editingProduct ? [...(editingProduct.images || [])] : [];
           openProductEditor();
+        };
+      });
+
+      container.querySelectorAll('[data-admin-delete]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.adminDelete;
+          const targetProd = adminData.products.find(p => p.id === id);
+          if (!targetProd) return;
+          if (confirm(`هل أنت متأكد من حذف المنتج "${targetProd.name}"؟`)) {
+            adminData.products = adminData.products.filter(p => p.id !== id);
+            await saveAndSyncProducts(adminData.products);
+            renderAdminProducts(container);
+            toast(`تم حذف "${targetProd.name}" وتحديث المتجر.`);
+          }
         };
       });
     }
@@ -2722,28 +2931,8 @@
             catalog.categories.push(savedProduct.category);
           }
 
-          // 3. Persist locally to localStorage
-          try {
-            localStorage.setItem('shop_admin_products', JSON.stringify(adminData.products));
-          } catch (e) {}
-
-          // 4. Send to Google Sheets if configured
-          const sheetUrl = localStorage.getItem('shop_google_sheet_url');
-          if (sheetUrl && sheetUrl.startsWith('http')) {
-            try {
-              fetch(sheetUrl, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'saveProduct', product: savedProduct })
-              });
-              toast('تم حفظ المنتج وتسجيله في Google Sheets بنجاح! 📊');
-            } catch (sheetErr) {
-              console.warn('Google Sheets sync error:', sheetErr);
-            }
-          } else {
-            toast('تم حفظ المنتج بنجاح وتحديث المتجر.');
-          }
+          // 3. Persist and sync across all admins and live website (GitHub Cloud Sync + Google Sheets + LocalStorage)
+          await saveAndSyncProducts(adminData.products);
 
           wrap.innerHTML = '';
           renderAdminProducts($('#admin-tab-content'));
@@ -3539,14 +3728,8 @@ function doPost(e) {
     });
 
     // Populate dropdown items
-    menu.innerHTML = [
-      'الكل',
-      'إلكترونيات',
-      'أزياء وإكسسوارات',
-      'المنزل',
-      'أحذية',
-      'ساعات وإكسسوارات'
-    ].map(cat => `
+    const allCats = ['الكل', ...Array.from(new Set(catalog.categories || [])).filter(c => c && c !== 'الكل')];
+    menu.innerHTML = allCats.map(cat => `
       <a href="/?category=${encodeURIComponent(cat)}" class="cats-dropdown-item" data-dropdown-cat="${esc(cat)}">
         <span>${esc(cat)}</span>
       </a>
@@ -3567,7 +3750,6 @@ function doPost(e) {
   (async function init() {
     updateBadges();
     setupSearchInputs();
-    setupCategoriesDropdown();
 
     // Global Modal backdrop & ESC close handler
     const backdrop = $('#modal-backdrop');
@@ -3583,23 +3765,45 @@ function doPost(e) {
     }
 
     try {
-      const data = await api('/api/catalog');
-      if (data && data.products) {
+      let remoteProducts = null;
+      try {
+        const data = await api('/api/catalog');
+        if (data && data.products) {
+          remoteProducts = data.products;
+          if (data.categories && data.categories.length) {
+            catalog.categories = Array.from(new Set([...catalog.categories, ...data.categories]));
+          }
+          if (data.settings) {
+            catalog.settings = { ...catalog.settings, ...data.settings };
+          }
+          catalog.demo = data.demo ?? false;
+        }
+      } catch (backendErr) {
+        // Backend /api/catalog not available (e.g., GitHub Pages static hosting)
+      }
+
+      // If backend not present or returned nothing, load from shared products.json (GitHub / raw / localStorage)
+      if (!remoteProducts || !remoteProducts.length) {
+        remoteProducts = await loadSharedProducts();
+        catalog.demo = false;
+      }
+
+      if (remoteProducts && remoteProducts.length) {
         // 1. Enrich baseline products with remote data, preserving any updated images
         const enriched = BASELINE_PRODUCTS.map(base => {
-          const remote = data.products.find(p => p.id === base.id || p.slug === base.slug);
+          const remote = remoteProducts.find(p => p.id === base.id || p.slug === base.slug);
           const imgs = (remote && remote.images && remote.images.length) ? remote.images : base.images;
           return remote ? { ...base, ...remote, images: imgs } : base;
         });
 
-        // 2. Append any products from server that aren't in baseline
-        for (const p of data.products) {
+        // 2. Append any products from remote that aren't in baseline
+        for (const p of remoteProducts) {
           if (!enriched.some(e => e.id === p.id || e.slug === p.slug)) {
             enriched.push(p);
           }
         }
 
-        // 3. Merge locally saved admin products (from localStorage)
+        // 3. Merge locally saved admin products (from localStorage fallback)
         try {
           const raw = localStorage.getItem('shop_admin_products');
           if (raw) {
@@ -3616,17 +3820,19 @@ function doPost(e) {
         } catch (e) {}
 
         catalog.products = enriched;
-        if (data.categories && data.categories.length) {
-          catalog.categories = Array.from(new Set([...catalog.categories, ...data.categories]));
+
+        // Auto-discover any new categories
+        const catSet = new Set(catalog.categories);
+        for (const p of enriched) {
+          if (p.category) catSet.add(p.category);
         }
-        if (data.settings) {
-          catalog.settings = { ...catalog.settings, ...data.settings };
-        }
-        catalog.demo = data.demo ?? true;
+        catalog.categories = Array.from(catSet);
       }
     } catch (e) {
-      console.warn('Backend catalog sync notice:', e.message);
+      console.warn('Catalog init notice:', e.message);
     }
+
+    setupCategoriesDropdown();
 
     // Show Demo Banner if in demo mode
     const notice = $('#notice');
