@@ -30,13 +30,13 @@ async function body(req,max=100000) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 function json(res,value,status=200) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
-const types={'.css':'text/css','.js':'text/javascript','.html':'text/html'};
+const types={'.css':'text/css','.js':'text/javascript','.html':'text/html','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.svg':'image/svg+xml','.ico':'image/x-icon'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 http.createServer(async(req,res)=>{
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options','DENY');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   if(origin.startsWith('https:')) res.setHeader('Strict-Transport-Security','max-age=31536000');
   try{
     const u=new URL(req.url,origin),p=u.pathname;
@@ -118,11 +118,17 @@ http.createServer(async(req,res)=>{
       res.writeHead(200,{'Content-Type':`image/${ext==='jpg'?'jpeg':ext}`,'Cache-Control':'private, max-age=60'});return res.end(bytes);
     }
     if(p.startsWith('/api/'))return json(res,{error:'Not found'},404);
-    if(['/app.js','/style.css'].includes(p)){
-      const file=await readFile(new URL(`./public${p}`,import.meta.url));
-      res.writeHead(200,{'Content-Type':`${types[p.slice(p.lastIndexOf('.'))]}; charset=utf-8`});return res.end(file);
+    if(['/app.js','/style.css'].includes(p) || (p.startsWith('/images/') && !p.includes('..'))){
+      try {
+        const file=await readFile(new URL(`./public${p}`,import.meta.url));
+        const ext=p.slice(p.lastIndexOf('.'));
+        res.writeHead(200,{'Content-Type':`${types[ext]||'application/octet-stream'}${['.css','.js','.html','.svg'].includes(ext)?'; charset=utf-8':''}`,'Cache-Control':'public, max-age=86400'});
+        return res.end(file);
+      } catch {
+        return json(res,{error:'Not found'},404);
+      }
     }
-    if(!['/','/about','/admin','/cart'].includes(p)&&!p.startsWith('/product/'))return json(res,{error:'Not found'},404);
+    if(!['/','/about','/admin','/cart','/favorites','/help','/privacy','/account'].includes(p)&&!p.startsWith('/product/'))return json(res,{error:'Not found'},404);
     let html=await readFile(new URL('./public/index.html',import.meta.url),'utf8');
     if(p.startsWith('/product/')){
       const slug=decodeURIComponent(p.slice(9)),product=available(await rows('Products')).find(pr=>pr.slug===slug);

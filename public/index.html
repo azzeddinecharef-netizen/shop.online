@@ -1,10 +1,286 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#153c32"><title>Shop Online</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FF5A36">
+  <title>Shop Online | متجر إلكتروني عصري</title>
+  <meta name="description" content="Shop Online - اختيارات جديدة كل يوم. كل ما تحبّه في مكان واحد مع خدمة الدفع عند الاستلام.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
 <body>
-<div class="topline">اختيارات لكل يوم · تسوّق على راحتك</div>
-<header><a class="brand" href="/"><span class="brandmark">S<span>•</span></span><span>Shop <b>Online</b><small>أشياء تحبّها، لحياة أسهل.</small></span></a><nav><a href="/">المتجر</a><a href="/about">عن المتجر</a><a href="/cart" class="cartlink">حقيبة التسوّق <span id="count">0</span></a></nav></header>
-<div id="notice" hidden></div><main id="main"><p class="loading">جارٍ تحميل المتجر…</p></main>
-<footer><div><a href="/" class="footerbrand">Shop Online<span>•</span></a><p>كل ما تحتاجه، في مكان واحد.</p></div><nav><a href="/about">عن المتجر</a><a href="/admin">لوحة الإدارة</a><span>© <span id="year"></span> Shop Online</span></nav></footer>
-<div role="status" id="toast" hidden></div>
-</body></html>
+  <!-- Top Announcement Bar -->
+  <div class="top-announcement" id="top-announcement">
+    <div class="top-announcement-inner">
+      <div class="announcement-text">
+        <span class="announcement-highlight">اختيارات كثيرة. تجربة أبسط.</span>
+        <span class="announcement-dot">•</span>
+        <span>الدفع عند الاستلام</span>
+        <span class="announcement-dot">•</span>
+        <span>تأكيد الطلب معك خطوة بخطوة</span>
+      </div>
+      <div class="announcement-meta">
+        <span>العربية</span>
+        <span class="announcement-dot">•</span>
+        <span>DZD</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Site Header -->
+  <header class="site-header" id="site-header">
+    <div class="header-inner">
+      <!-- Logo -->
+      <a href="/" class="brand-logo" id="logo-link" aria-label="الصفحة الرئيسية لمتجر Shop Online">
+        <span class="brand-title">Shop Online</span>
+        <span class="brand-badge" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 8h14l2 13H3L5 8z"></path>
+            <path d="M8 8V6a4 4 0 0 1 8 0v2"></path>
+          </svg>
+        </span>
+      </a>
+
+      <!-- Search Bar -->
+      <div class="header-search">
+        <div class="search-input-wrap">
+          <svg class="search-icon-inside" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#69707D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="search" id="site-search-input" class="search-input" placeholder="ابحث عن منتج، فئة، أو شيء تحبّه…" aria-label="البحث عن منتج" autocomplete="off">
+          <button type="button" id="site-search-btn" class="search-submit-btn" aria-label="تنفيذ البحث">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Action Items: Account, Favorites, Cart -->
+      <nav class="header-actions" aria-label="قائمة المستخدم">
+        <a href="/account" class="action-btn" id="account-nav-btn">
+          <svg class="action-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span class="action-label">حسابي</span>
+        </a>
+
+        <a href="/favorites" class="action-btn" id="fav-nav-btn">
+          <div class="icon-badge-wrap">
+            <svg class="action-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+            </svg>
+            <span class="count-badge" id="fav-badge" hidden>0</span>
+          </div>
+          <span class="action-label">المفضلة</span>
+        </a>
+
+        <a href="/cart" class="action-btn cart-btn" id="cart-nav-btn">
+          <div class="icon-badge-wrap">
+            <svg class="action-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <path d="M16 10a4 4 0 0 1-8 0"></path>
+            </svg>
+            <span class="count-badge" id="cart-badge">0</span>
+          </div>
+          <span class="action-label">السلة (<span id="cart-label-count">0</span>)</span>
+        </a>
+      </nav>
+    </div>
+
+    <!-- Mobile Search Bar (below logo row on mobile) -->
+    <div class="mobile-search-strip">
+      <div class="search-input-wrap">
+        <svg class="search-icon-inside" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#69707D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="search" id="mobile-search-input" class="search-input" placeholder="ابحث عن شيء تحبّه…" aria-label="البحث عن منتج" autocomplete="off">
+      </div>
+    </div>
+
+    <!-- Category Sub-navigation -->
+    <nav class="sub-nav" aria-label="أقسام المتجر">
+      <div class="sub-nav-inner">
+        <div class="categories-dropdown-wrap">
+          <button type="button" class="all-cats-btn" id="all-cats-trigger" aria-expanded="false" aria-haspopup="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+            </svg>
+            <span>جميع الأقسام</span>
+            <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="cats-dropdown-menu" id="cats-dropdown-menu" hidden>
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+
+        <ul class="nav-links" id="primary-nav-links">
+          <li><a href="/" class="nav-item active" data-nav="home">الرئيسية</a></li>
+          <li><a href="/?sort=newest" class="nav-item" data-nav="new">وصل حديثًا</a></li>
+          <li><a href="/?category=electronics" class="nav-item" data-cat="إلكترونيات">إلكترونيات</a></li>
+          <li><a href="/?category=fashion" class="nav-item" data-cat="أزياء وإكسسوارات">أزياء وإكسسوارات</a></li>
+          <li><a href="/?category=home" class="nav-item" data-cat="المنزل">المنزل</a></li>
+        </ul>
+
+        <div class="nav-end">
+          <a href="/help" class="nav-item support-link">
+            <span>الدعم والمساعدة</span>
+          </a>
+        </div>
+      </div>
+    </nav>
+  </header>
+
+  <!-- Demo Notice Banner -->
+  <div id="notice" class="demo-banner" hidden>
+    <div class="demo-banner-content">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span id="notice-text">وضع المعاينة التجريبي — استقبال الطلبات معطل حاليًا. يمكنك استعراض المتجر وتجربة السلة بحرية.</span>
+    </div>
+  </div>
+
+  <!-- Main View Container -->
+  <main id="main" class="main-content">
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <p>جارٍ تحميل المتجر…</p>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer" id="site-footer">
+    <div class="footer-inner">
+      <div class="footer-grid">
+        <!-- Brand column -->
+        <div class="footer-col brand-col">
+          <a href="/" class="footer-brand">
+            <span class="brand-title">Shop Online</span>
+            <span class="brand-badge" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 8h14l2 13H3L5 8z"></path>
+                <path d="M8 8V6a4 4 0 0 1 8 0v2"></path>
+              </svg>
+            </span>
+          </a>
+          <p class="brand-desc">منتجات تحبّها، واختيارات تناسب يومك.</p>
+        </div>
+
+        <!-- Shop links -->
+        <div class="footer-col">
+          <h4 class="footer-title">تسوّق</h4>
+          <ul class="footer-links">
+            <li><a href="/#categories">جميع الأقسام</a></li>
+            <li><a href="/#collection">مختاراتنا</a></li>
+            <li><a href="/?sort=newest">وصل حديثًا</a></li>
+          </ul>
+        </div>
+
+        <!-- About links -->
+        <div class="footer-col">
+          <h4 class="footer-title">عن المتجر</h4>
+          <ul class="footer-links">
+            <li><a href="/about">من نحن</a></li>
+            <li><a href="/privacy">الشروط والخصوصية</a></li>
+            <li><a href="/admin">لوحة الإدارة</a></li>
+          </ul>
+        </div>
+
+        <!-- Support links -->
+        <div class="footer-col">
+          <h4 class="footer-title">المساعدة</h4>
+          <ul class="footer-links">
+            <li><a href="/help">تواصل معنا</a></li>
+            <li><a href="/help#faq">الأسئلة الشائعة</a></li>
+            <li><a href="/help#delivery">طرق التوصيل والدفع</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Bottom bar -->
+      <div class="footer-bottom">
+        <p class="copyright">Shop Online · تجربة تسوّق أقرب إليك</p>
+        <p class="localization">DZD · العربية</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Mobile Bottom Navigation -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="شريط التنقل السفلي">
+    <a href="/" class="mobile-nav-btn active" data-nav="home">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 10L12 2l9 8v11a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1V10z"></path>
+      </svg>
+      <span>الرئيسية</span>
+    </a>
+
+    <a href="/#categories" class="mobile-nav-btn" data-nav="categories">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+        <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+        <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+        <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+      </svg>
+      <span>الأقسام</span>
+    </a>
+
+    <a href="/favorites" class="mobile-nav-btn" data-nav="favorites">
+      <div class="mobile-icon-badge-wrap">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+        </svg>
+        <span class="mobile-badge" id="mobile-fav-badge" hidden>0</span>
+      </div>
+      <span>المفضلة</span>
+    </a>
+
+    <a href="/cart" class="mobile-nav-btn" data-nav="cart">
+      <div class="mobile-icon-badge-wrap">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <path d="M16 10a4 4 0 0 1-8 0"></path>
+        </svg>
+        <span class="mobile-badge" id="mobile-cart-badge">0</span>
+      </div>
+      <span>السلة</span>
+    </a>
+
+    <a href="/account" class="mobile-nav-btn" data-nav="account">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+      </svg>
+      <span>حسابي</span>
+    </a>
+  </nav>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast-notification" role="status" aria-live="polite" hidden></div>
+
+  <!-- Modal / Dialog container -->
+  <div id="modal-backdrop" class="modal-backdrop" hidden>
+    <div class="modal-dialog" id="modal-dialog" role="dialog" aria-modal="true">
+      <button type="button" class="modal-close-btn" id="modal-close" aria-label="إغلاق النافذة">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+</body>
+</html>
