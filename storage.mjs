@@ -34,7 +34,7 @@ export async function sheets(path='', method='GET', body) {
   return r.json();
 }
 export async function rows(tab) {
-  if (demo) return structuredClone(memory[tab]);
+  if (demo || !ready()) return structuredClone(memory[tab] || []);
   const data=await sheets(`/values/${tab}!A2:B`);
   return (data.values || []).map(([id,json]) => ({...JSON.parse(json),id}));
 }
@@ -44,7 +44,13 @@ export function exclusive(operation) {
   const result = queue.then(operation); queue = result.catch(()=>{}); return result;
 }
 export async function save(tab, object) {
-  if (demo) throw new Error('الحفظ معطل في وضع المعاينة.');
+  if (!ready()) {
+    const list = memory[tab] = memory[tab] || [];
+    const index = list.findIndex(x => x.id === object.id);
+    if (index < 0) list.unshift(object);
+    else list[index] = object;
+    return;
+  }
   const data=await sheets(`/values/${tab}!A2:A`);
   const index=(data.values || []).findIndex(([id])=>id===object.id);
   const values=[[object.id,JSON.stringify(object)]];

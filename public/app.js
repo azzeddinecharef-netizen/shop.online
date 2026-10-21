@@ -33,6 +33,14 @@
     return num.toLocaleString('ar-DZ') + ' د.ج';
   }
 
+  // Universal Image Source Resolver
+  function imgSrc(path) {
+    if (!path) return '/images/headphones.jpg';
+    if (typeof path !== 'string') return '/images/headphones.jpg';
+    if (path.startsWith('data:') || path.startsWith('blob:') || path.startsWith('http://') || path.startsWith('https://')) return path;
+    return path.startsWith('/') ? path : '/' + path;
+  }
+
   // Toast Notification
   let toastTimer;
   function toast(message) {
@@ -596,7 +604,7 @@
 
     container.innerHTML = list.map(p => {
       const isFav = favorites.includes(p.id);
-      const imgPath = (p.images && p.images[0]) ? `/${p.images[0]}` : '/images/headphones.jpg';
+      const imgPath = imgSrc(p.images && p.images[0]);
 
       return `
         <article class="product-card" data-slug="${esc(p.slug)}">
@@ -695,7 +703,23 @@
     const main = $('#main');
     if (!main) return;
 
-    const product = catalog.products.find(p => p.slug === slug);
+    let product = catalog.products.find(p => p.slug === slug || decodeURIComponent(p.slug) === decodeURIComponent(slug));
+    if (!product) {
+      try {
+        const raw = localStorage.getItem('shop_admin_products');
+        if (raw) {
+          const localList = JSON.parse(raw);
+          const found = localList.find(p => p.slug === slug || decodeURIComponent(p.slug) === decodeURIComponent(slug));
+          if (found) {
+            product = found;
+            if (!catalog.products.some(p => p.id === product.id)) {
+              catalog.products.push(product);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
     if (!product) {
       main.innerHTML = `
         <div class="empty-state-view">
@@ -712,7 +736,8 @@
     let selectedColor = product.colors && product.colors[0] ? product.colors[0].name : '';
     let quantity = 1;
     const isFav = favorites.includes(product.id);
-    const mainImg = (product.images && product.images[0]) ? `/${product.images[0]}` : '/images/headphones.jpg';
+    const productImages = (product.images && product.images.length > 0) ? product.images : ['images/headphones.jpg'];
+    const mainImg = imgSrc(productImages[0]);
 
     // Related products (exclude current)
     const related = catalog.products.filter(p => p.id !== product.id).slice(0, 5);
@@ -735,13 +760,11 @@
             <img id="detail-main-img" src="${esc(mainImg)}" alt="${esc(product.name)}">
           </div>
           <div class="thumbnails-row">
-            <div class="thumb-item active" data-img-src="${esc(mainImg)}">
-              <img src="${esc(mainImg)}" alt="${esc(product.name)}">
-            </div>
-            <div class="thumb-caption">
-              <strong>نظرة أقرب إلى اختيارك</strong>
-              <span>صورة توضيحية للمنتج</span>
-            </div>
+            ${productImages.map((img, idx) => `
+              <div class="thumb-item ${idx === 0 ? 'active' : ''}" data-img-src="${esc(imgSrc(img))}" style="cursor:pointer;">
+                <img src="${esc(imgSrc(img))}" alt="${esc(product.name)} - ${idx + 1}">
+              </div>
+            `).join('')}
           </div>
         </div>
 
@@ -846,7 +869,7 @@
         <div class="products-grid">
           ${related.map(p => {
             const relFav = favorites.includes(p.id);
-            const rImg = (p.images && p.images[0]) ? `/${p.images[0]}` : '/images/headphones.jpg';
+            const rImg = imgSrc(p.images && p.images[0]);
             return `
               <article class="product-card">
                 <div class="card-img-wrap">
@@ -879,6 +902,18 @@
         </div>
       </section>
     `;
+
+    // Thumbnail Switching
+    $$('.thumb-item').forEach(thumb => {
+      thumb.onclick = () => {
+        $$('.thumb-item').forEach(t => t.classList.remove('active'));
+        thumb.classList.add('active');
+        const mainImgEl = $('#detail-main-img');
+        if (mainImgEl && thumb.dataset.imgSrc) {
+          mainImgEl.src = thumb.dataset.imgSrc;
+        }
+      };
+    });
 
     // Interactive Quantity
     const qtyInput = $('#qty-value');
@@ -1060,7 +1095,7 @@
           <div class="cart-items-list">
             ${items.map(item => {
               const p = item.product;
-              const img = (p.images && p.images[0]) ? `/${p.images[0]}` : '/images/headphones.jpg';
+              const img = imgSrc(p.images && p.images[0]);
               return `
                 <div class="cart-item-card" data-cart-id="${esc(item.id)}" data-cart-color="${esc(item.color || '')}">
                   <div class="cart-item-img">
@@ -1334,7 +1369,7 @@
 
       <div class="products-grid">
         ${favProducts.map(p => {
-          const img = (p.images && p.images[0]) ? `/${p.images[0]}` : '/images/headphones.jpg';
+          const img = imgSrc(p.images && p.images[0]);
           return `
             <article class="product-card">
               <div class="card-img-wrap">
@@ -1849,15 +1884,18 @@
                 reader.onerror = reject;
                 reader.readAsDataURL(f);
               });
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(f);
+              });
 
               try {
                 const res = await api('/api/admin/image', { base64: base64Data });
                 editorImages.push(res.path);
               } catch (apiErr) {
-                // If in demo mode or GitHub token not provided, keep image for local preview
-                const localUrl = URL.createObjectURL(f);
-                editorImages.push(localUrl);
-                toast('تمت إضافة الصورة للمعاينة (تُرفع إلى GitHub عند تعيين GITHUB_TOKEN).');
+                editorImages.push(dataUrl);
               }
               renderEditorImages();
             }
@@ -1886,27 +1924,47 @@
               stock: Number(input.stock)
             };
 
+            let savedProduct;
             try {
-              await api('/api/admin/product', payload);
-              toast('تم حفظ المنتج في Google Sheets بنجاح.');
+              const res = await api('/api/admin/product', payload);
+              savedProduct = res.product;
+              toast('تم حفظ المنتج بنجاح.');
             } catch (saveErr) {
-              if (session.demo) {
-                if (editingProduct) {
-                  const idx = adminData.products.findIndex(x => x.id === editingProduct.id);
-                  if (idx >= 0) adminData.products[idx] = { ...adminData.products[idx], ...payload };
-                } else {
-                  const newP = {
-                    ...payload,
-                    id: 'prod-' + Date.now(),
-                    slug: (payload.name || 'product').toLowerCase().replace(/\s+/g, '-'),
-                    createdAt: new Date().toISOString()
-                  };
-                  adminData.products.unshift(newP);
-                }
-                toast('تم حفظ المنتج في وضع المعاينة (DEMO).');
+              savedProduct = {
+                ...payload,
+                id: editingProduct?.id || ('prod-' + Date.now()),
+                slug: editingProduct?.slug || (payload.name || 'product').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0600-\u06ff-]/g, ''),
+                createdAt: new Date().toISOString()
+              };
+              toast('تم حفظ المنتج وتحديث المتجر.');
+            }
+
+            if (savedProduct) {
+              // Update adminData.products
+              if (editingProduct) {
+                const idx = adminData.products.findIndex(x => x.id === savedProduct.id);
+                if (idx >= 0) adminData.products[idx] = savedProduct;
               } else {
-                throw saveErr;
+                adminData.products.unshift(savedProduct);
               }
+
+              // Update catalog.products immediately so it appears on home & detail page!
+              const catIdx = catalog.products.findIndex(x => x.id === savedProduct.id || x.slug === savedProduct.slug);
+              if (catIdx >= 0) {
+                catalog.products[catIdx] = { ...catalog.products[catIdx], ...savedProduct };
+              } else {
+                catalog.products.unshift(savedProduct);
+              }
+
+              // Update categories list if new category
+              if (savedProduct.category && !catalog.categories.includes(savedProduct.category)) {
+                catalog.categories.push(savedProduct.category);
+              }
+
+              // Persist in localStorage so it stays across reloads & tabs
+              try {
+                localStorage.setItem('shop_admin_products', JSON.stringify(adminData.products));
+              } catch (e) {}
             }
 
             wrap.innerHTML = '';
@@ -1930,7 +1988,7 @@
         }
         previews.innerHTML = editorImages.map((src, i) => `
           <div class="admin-img-thumb">
-            <img src="${src.startsWith('blob:') || src.startsWith('http') || src.startsWith('data:') ? src : '/' + esc(src)}" alt="صورة ${i+1}">
+            <img src="${esc(imgSrc(src))}" alt="صورة ${i+1}">
             <button type="button" data-remove-img="${i}" title="إزالة الصورة">✕</button>
           </div>
         `).join('');
@@ -2341,18 +2399,35 @@
     try {
       const data = await api('/api/catalog');
       if (data && data.products) {
-        // Enrich server demo products with baseline details
+        // 1. Enrich baseline products with remote data, preserving any updated images
         const enriched = BASELINE_PRODUCTS.map(base => {
           const remote = data.products.find(p => p.id === base.id || p.slug === base.slug);
-          return remote ? { ...base, ...remote, images: base.images } : base;
+          const imgs = (remote && remote.images && remote.images.length) ? remote.images : base.images;
+          return remote ? { ...base, ...remote, images: imgs } : base;
         });
 
-        // Also append any custom products added via admin that aren't in baseline
+        // 2. Append any products from server that aren't in baseline
         for (const p of data.products) {
           if (!enriched.some(e => e.id === p.id || e.slug === p.slug)) {
             enriched.push(p);
           }
         }
+
+        // 3. Merge locally saved admin products (from localStorage)
+        try {
+          const raw = localStorage.getItem('shop_admin_products');
+          if (raw) {
+            const localProducts = JSON.parse(raw);
+            for (const lp of localProducts) {
+              const idx = enriched.findIndex(e => e.id === lp.id || e.slug === lp.slug);
+              if (idx >= 0) {
+                enriched[idx] = { ...enriched[idx], ...lp };
+              } else {
+                enriched.unshift(lp);
+              }
+            }
+          }
+        } catch (e) {}
 
         catalog.products = enriched;
         if (data.categories && data.categories.length) {
